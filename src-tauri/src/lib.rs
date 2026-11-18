@@ -82,10 +82,10 @@ pub fn run() {
             app.state::<playback::Playback>().0.lock().map_err(|_| "The audio player is unavailable")?.start()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, playback::playback, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_firewall, link::link_revoke]);
+        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, playback::playback, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_firewall, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
     #[cfg(target_os = "windows")]
     let builder = builder.manage(link::Link::default())
-        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_revoke]);
+        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let builder = builder
         .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music])

@@ -72,6 +72,9 @@ def dispatch(operation, args):
             return backend.dispatch('spotify_parse', {'path': str(path), 'filename': args.get('filename')})
         finally:
             path.unlink(missing_ok=True)
+    if operation == 'link_discover':
+        targets = [(address, device_sync.LINK_PORT) for address in args.get('broadcasts', [])]
+        return device_sync.discover(targets=targets or None)
     if operation == 'link_status':
         try:
             state = json.loads((ROOT / 'pc-link.json').read_text())

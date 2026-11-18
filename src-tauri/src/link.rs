@@ -16,6 +16,23 @@ impl Link {
 #[tauri::command]
 pub fn link_stop(link: State<'_, Link>) { link.stop(); }
 
+async fn phone_request(app: tauri::AppHandle, operation: &str, args: Value) -> Result<Value, String> {
+    if link_status(app.clone(), app.state::<Link>())?["running"] != true {
+        return Err("Enable the phone connection first".into());
+    }
+    crate::music::engine(&app, operation, args, std::time::Duration::from_secs(12)).await
+}
+
+#[tauri::command]
+pub async fn link_discover_phones(app: tauri::AppHandle) -> Result<Value, String> {
+    phone_request(app, "link_discover_phones", json!({})).await
+}
+
+#[tauri::command]
+pub async fn link_invite_phone(app: tauri::AppHandle, address: String, id: String) -> Result<Value, String> {
+    phone_request(app, "link_invite_phone", json!({ "address": address, "id": id })).await
+}
+
 #[tauri::command]
 #[cfg(target_os = "linux")]
 pub async fn link_firewall(app: tauri::AppHandle) -> Result<bool, String> {
@@ -26,18 +43,23 @@ pub async fn link_firewall(app: tauri::AppHandle) -> Result<bool, String> {
         details["networks"].as_array().ok_or("No local network was found")?.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect()
     };
     if networks.is_empty() { return Err("Connect this computer to Wi-Fi first".into()); }
+    let firewall_help = "Allow local TCP and UDP port 47832 and UDP port 47834 in your firewall settings.";
+    let ufw = ["/usr/bin/ufw", "/usr/sbin/ufw"].into_iter().find(|p| std::path::Path::new(p).is_file()).ok_or(firewall_help)?;
     for network in networks {
         let (address, prefix) = network.split_once('/').ok_or("Invalid local network")?;
         let address = address.parse::<std::net::Ipv4Addr>().map_err(|_| "Invalid local network")?;
         let prefix = prefix.parse::<u8>().map_err(|_| "Invalid local network")?;
         if !address.is_private() || !(8..=32).contains(&prefix) { return Err("Choose a private local network".into()); }
-        let ufw = ["/usr/bin/ufw", "/usr/sbin/ufw"].into_iter().find(|p| std::path::Path::new(p).is_file()).ok_or("Open your firewall settings to allow local TCP port 47832")?;
-        let child = tokio::process::Command::new("/usr/bin/pkexec").args([ufw, "allow", "from", &network, "to", "any", "port", "47832", "proto", "tcp", "comment", "Undertone phone connection"])
-            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).spawn()
-            .map_err(|_| "Open your firewall settings and allow TCP port 47832 from your local Wi-Fi network".to_owned())?;
-        let status = tokio::time::timeout(std::time::Duration::from_secs(120), child.wait_with_output()).await
-            .map_err(|_| "The system permission prompt timed out")?.map_err(|e| e.to_string())?.status;
-        if !status.success() { return Err("Linux did not allow the firewall change. Approve its system password prompt, or allow local TCP port 47832 in your firewall settings.".into()); }
+        // Port 47832 serves TLS and answers discovery. Port 47834 receives phones' unicast replies to broadcasts.
+        for (port, protocol) in [("47832", &[][..]), ("47834", &["proto", "udp"][..])] {
+            let child = tokio::process::Command::new("/usr/bin/pkexec").args([ufw, "allow"]).args(protocol)
+                .args(["from", &network, "to", "any", "port", port, "comment", "Undertone phone connection"])
+                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).spawn()
+                .map_err(|_| firewall_help.to_owned())?;
+            let status = tokio::time::timeout(std::time::Duration::from_secs(120), child.wait_with_output()).await
+                .map_err(|_| "The system permission prompt timed out")?.map_err(|e| e.to_string())?.status;
+            if !status.success() { return Err(format!("Linux did not allow the firewall change. {firewall_help}")); }
+        }
     }
     Ok(true)
 }

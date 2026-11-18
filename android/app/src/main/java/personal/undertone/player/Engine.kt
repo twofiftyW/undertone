@@ -1,6 +1,7 @@
 package personal.undertone.player
 
 import android.content.Context
+import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
@@ -17,6 +18,11 @@ object Engine {
     fun reply(context: Context, operation: String, args: String): String {
         initialize(context)
         return Python.getInstance().getModule("android_bridge").callAttr("handle", operation, args).toString()
+    }
+
+    fun openPhoneDiscovery(context: Context, name: String): PyObject {
+        initialize(context)
+        return Python.getInstance().getModule("device_sync").callAttr("PhonePresence", name)
     }
 
     fun call(context: Context, operation: String, args: JSONObject): JSONObject {

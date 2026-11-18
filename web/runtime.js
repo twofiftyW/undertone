@@ -31,7 +31,7 @@ async function invoke(command, args, options) {
   if (command === "delete_audio") return call("deleteAudio", args.id);
   if (command === "platform") return "android";
   if (command === 'spotify_help') return call('spotifyHelp');
-  if (['music', 'list_downloads', 'offline_file', 'download_track', 'remove_download', 'link_status', 'link_pair', 'link_forget', 'link_pull'].includes(command)) return request(command, args);
+  if (['music', 'list_downloads', 'offline_file', 'download_track', 'remove_download', 'link_status', 'link_discover', 'link_phone_start', 'link_phone_status', 'link_phone_stop', 'link_pair', 'link_forget', 'link_pull'].includes(command)) return request(command, args);
   if (command === 'parse_spotify') {
     call('beginImport');
     for (let offset = 0; offset < args.length; offset += 32768) {

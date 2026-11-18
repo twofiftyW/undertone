@@ -1,6 +1,7 @@
 """An opt-in, pinned-TLS LAN copy of the PC library. No cloud account or uploads."""
 from __future__ import annotations
 import copy
+from collections import deque
 import hashlib
 import hmac
 import http.client
@@ -13,6 +14,7 @@ import re
 import secrets
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -21,6 +23,16 @@ import time
 
 MAX_LIBRARY = 64 * 1024 * 1024
 MAX_AUDIO = 512 * 1024 * 1024
+LINK_PORT = 47832
+PHONE_PORT = 47833
+PHONE_SCAN_PORT = 47834
+DISCOVERY_QUERY = b'UNDERTONE/1 FIND '
+DISCOVERY_REPLY = b'UNDERTONE/1 PC '
+PHONE_QUERY = b'UNDERTONE/1 FIND-PHONE '
+PHONE_REPLY = b'UNDERTONE/1 PHONE '
+PHONE_INVITE = b'UNDERTONE/1 INVITE '
+PHONE_ACK = b'UNDERTONE/1 RECEIVED '
+MAX_DISCOVERY_PACKET = 512
 LOCAL_NAME = re.compile(r'[a-f0-9]{64}\.[a-z0-9]{1,10}\Z')
 DOWNLOAD_NAME = re.compile(r'(?:\d{17,20}\.flac|youtube-[A-Za-z0-9_-]{11}\.(?:m4a|webm|opus|mp3|ogg))\Z')
 
@@ -47,6 +59,206 @@ def lan_address(value):
         return address.version == 4 and (address.is_loopback or any(address in ipaddress.ip_network(block) for block in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16')))
     except ValueError:
         return False
+
+
+class DiscoveryHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        packet, sock = self.request
+        if len(packet) <= MAX_DISCOVERY_PACKET and lan_address(self.client_address[0]):
+            reply = self.server.response(packet, self.client_address[0])
+            if reply is not None:
+                sock.sendto(reply, self.client_address)
+
+
+def display_name(value, fallback):
+    return ''.join(c for c in value if c.isprintable()).strip()[:80] or fallback
+
+
+def read_name(raw):
+    try:
+        name = raw.decode('utf-8').strip()
+    except UnicodeError:
+        return None
+    return name if 0 < len(name) <= 80 and name.isprintable() else None
+
+
+class DiscoveryServer(socketserver.UDPServer):
+    max_packet_size = MAX_DISCOVERY_PACKET + 1
+    query = DISCOVERY_QUERY
+    reply = DISCOVERY_REPLY
+
+    def __init__(self, address, name=None):
+        self.name = display_name(socket.gethostname(), 'Undertone PC') if name is None else name
+        self.instance = secrets.token_hex(8).encode()
+        self.announcement = self.instance + b' ' + self.name.encode('utf-8')
+        super().__init__(address, DiscoveryHandler)
+
+    def response(self, packet, ip):
+        if packet.startswith(self.query):
+            nonce = packet[len(self.query):]
+            if re.fullmatch(b'[0-9a-f]{32}', nonce):
+                return self.reply + nonce + b' ' + self.announcement
+
+
+class PhonePresence(DiscoveryServer):
+    """Announce this phone only while its foreground connection dialog is open."""
+    query = PHONE_QUERY
+    reply = PHONE_REPLY
+
+    def __init__(self, name, host='0.0.0.0', port=PHONE_PORT):
+        super().__init__((host, port), display_name(name, 'Android phone'))
+        self.pending = deque(maxlen=8)
+        self.recent = deque(maxlen=64)
+        self.lock = threading.Lock()
+        threading.Thread(target=self.serve_forever, args=(0.1,), daemon=True).start()
+
+    def response(self, packet, ip):
+        if not packet.startswith(PHONE_INVITE):
+            return super().response(packet, ip)
+        fields = packet[len(PHONE_INVITE):].split(b' ', 2)
+        if len(fields) != 3:
+            return None
+        target_id, nonce, raw_name = fields
+        name = read_name(raw_name)
+        if target_id != self.instance or not re.fullmatch(b'[0-9a-f]{32}', nonce) or not name:
+            return None
+        with self.lock:
+            if (ip, nonce) not in self.recent:
+                self.recent.append((ip, nonce))
+                self.pending.append((time.monotonic(), {'name': name, 'address': f'{ip}:{LINK_PORT}'}))
+        return PHONE_ACK + target_id + b' ' + nonce
+
+    def take_invitation(self):
+        with self.lock:
+            while self.pending:
+                timestamp, invitation = self.pending.popleft()
+                if time.monotonic() - timestamp < 30:
+                    return invitation
+        return None
+
+    def close(self):
+        self.shutdown()
+        self.server_close()
+        with self.lock:
+            self.pending.clear()
+
+
+def probe_replies(packet, targets, timeout, listen_port=0):
+    ports = {port for _, port in targets}
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        if listen_port:
+            try:
+                sock.bind(('', listen_port))
+            except OSError as error:
+                raise ValueError('Phone search needs UDP port 47834. Try again when the port is free.') from error
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        start = time.monotonic()
+        for attempt in range(1, 4):
+            for target in targets:
+                try:
+                    sock.sendto(packet, target)
+                except OSError:
+                    continue  # A network interface may have gone away during discovery.
+            deadline = start + timeout * attempt / 3
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                sock.settimeout(remaining)
+                try:
+                    reply, (ip, port) = sock.recvfrom(MAX_DISCOVERY_PACKET + 1)
+                except TimeoutError:
+                    break
+                except ConnectionResetError:
+                    continue  # Windows reports an unreachable UDP peer through recvfrom.
+                except OSError as error:
+                    if getattr(error, 'winerror', None) == 10040:  # oversized datagram
+                        continue
+                    raise
+                if port in ports and lan_address(ip) and len(reply) <= MAX_DISCOVERY_PACKET:
+                    yield reply, (ip, port)
+
+
+def find_devices(targets, timeout, phones, listen_port=0):
+    targets = tuple(targets)
+    nonce = secrets.token_hex(16).encode()
+    query = (PHONE_QUERY if phones else DISCOVERY_QUERY) + nonce
+    prefix = (PHONE_REPLY if phones else DISCOVERY_REPLY) + nonce + b' '
+    devices = {}
+    instances = set()
+    for packet, (ip, port) in probe_replies(query, targets, timeout, listen_port):
+        if not packet.startswith(prefix):
+            continue
+        instance, _, raw_name = packet[len(prefix):].partition(b' ')
+        address = f'{ip}:{port}'
+        if not re.fullmatch(b'[0-9a-f]{16}', instance) or instance in instances or address in devices:
+            continue
+        name = read_name(raw_name)
+        if name:
+            devices[address] = {'name': name, 'address': address}
+            if phones:
+                devices[address]['id'] = instance.decode('ascii')
+            instances.add(instance)
+            if len(devices) == 64:
+                break
+    return sorted(devices.values(), key=lambda device: (device['name'].casefold(), device['address']))
+
+
+def discover(targets=None, timeout=2.4):
+    """Find enabled Undertone PCs. Only the UDP sender supplies the TLS endpoint."""
+    if targets is None:
+        targets = [('255.255.255.255', LINK_PORT)]
+    return find_devices(targets, timeout, phones=False)
+
+
+def desktop_broadcasts():
+    addresses = {'255.255.255.255'}
+    try:
+        if os.name == 'nt':
+            # Read interface masks through the Windows .NET API, independent of system language.
+            script = """foreach ($nic in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+              if ($nic.OperationalStatus -ne 'Up') { continue }
+              foreach ($entry in $nic.GetIPProperties().UnicastAddresses) {
+                if ($entry.Address.AddressFamily -eq 'InterNetwork') {
+                  $entry.Address.IPAddressToString + '/' + $entry.IPv4Mask.IPAddressToString
+                }
+              }
+            }"""
+            result = subprocess.check_output(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+                                             timeout=3, creationflags=subprocess.CREATE_NO_WINDOW, stderr=subprocess.DEVNULL)
+            interfaces = result.decode('ascii').splitlines()
+        else:
+            rows = json.loads(subprocess.check_output(['ip', '-j', '-4', 'addr', 'show', 'up'], timeout=3))
+            interfaces = [f"{row['local']}/{row['prefixlen']}" for nic in rows for row in nic.get('addr_info', [])]
+        for interface in interfaces:
+            network = ipaddress.IPv4Interface(interface)
+            if lan_address(str(network.ip)) and not network.ip.is_loopback and network.network.prefixlen < 31:
+                addresses.add(str(network.network.broadcast_address))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return sorted(addresses)
+
+
+def discover_phones(targets=None, timeout=2.4):
+    if targets is None:
+        targets = [(broadcast, PHONE_PORT) for broadcast in desktop_broadcasts()]
+        # Broadcast replies arrive as unicast, so a firewall rule needs a known destination port.
+        return find_devices(targets, timeout, phones=True, listen_port=PHONE_SCAN_PORT)
+    return find_devices(targets, timeout, phones=True)
+
+
+def invite_phone(address, phone_id, timeout=1.2):
+    match = re.fullmatch(r'(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})', str(address))
+    if not match or not lan_address(match[1]) or not 1 <= int(match[2]) <= 65535 or not re.fullmatch('[0-9a-f]{16}', str(phone_id)):
+        raise ValueError('Choose an available phone.')
+    target = (match[1], int(match[2]))
+    nonce = secrets.token_hex(16).encode()
+    invitation = phone_id.encode() + b' ' + nonce
+    name = display_name(socket.gethostname(), 'Undertone PC').encode('utf-8')
+    for reply, peer in probe_replies(PHONE_INVITE + invitation + b' ' + name, [target], timeout):
+        if peer == target and reply == PHONE_ACK + invitation:
+            return True
+    raise ValueError('The phone did not respond. Open Connect PC on the phone and search again.')
 
 
 def manifest(root, device_id):
@@ -117,6 +329,7 @@ class LibraryServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, root, host='0.0.0.0', port=0):
+        self.discovery = None
         self.root = Path(root).resolve()
         key, cert, self.fingerprint = certificate(self.root)
         self.state_path = self.root / 'link' / 'devices.json'
@@ -135,6 +348,19 @@ class LibraryServer(ThreadingHTTPServer):
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(cert, key)
         self.socket = context.wrap_socket(self.socket, server_side=True)
+        try:
+            self.discovery = DiscoveryServer((host, self.server_port))
+        except OSError:
+            pass  # Manual pairing still works when UDP is unavailable.
+        else:
+            threading.Thread(target=self.discovery.serve_forever, args=(0.1,), daemon=True).start()
+
+    def server_close(self):
+        if self.discovery is not None:
+            self.discovery.shutdown()
+            self.discovery.server_close()
+            self.discovery = None
+        super().server_close()
 
     def details(self):
         addresses = []
@@ -156,7 +382,11 @@ class LibraryServer(ThreadingHTTPServer):
             firewall = 'ENABLED=yes' in Path('/etc/ufw/ufw.conf').read_text()
         except OSError:
             firewall = False
-        return {'running': True, 'addresses': [f'{a}:{self.server_port}' for a in addresses], 'networks': networks, 'firewall': firewall, 'code': '-'.join([prefix[:4], prefix[4:8], prefix[8:12], prefix[12:], self.pin]), 'expires': int(self.expires * 1000), 'pairedDevices': len(self.devices['tokens'])}
+        return {'running': True, 'discoveryAvailable': self.discovery is not None,
+                'discoveryName': self.discovery.name if self.discovery else '',
+                'addresses': [f'{a}:{self.server_port}' for a in addresses], 'networks': networks,
+                'firewall': firewall, 'code': '-'.join([prefix[:4], prefix[4:8], prefix[8:12], prefix[12:], self.pin]),
+                'expires': int(self.expires * 1000), 'pairedDevices': len(self.devices['tokens'])}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -362,7 +592,7 @@ def serve(root):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     # Fixed port keeps a paired phone usable when Undertone is reopened.
-    server = LibraryServer(root, port=47832)
+    server = LibraryServer(root, port=LINK_PORT)
     print(json.dumps({'data': server.details()}), flush=True)
     def watch_parent():
         sys.stdin.read(1)  # The app holds this pipe open for the lifetime of the connection.
