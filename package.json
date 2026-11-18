@@ -1,0 +1,17 @@
+{
+  "name": "undertone",
+  "version": "0.0.1-alpha",
+  "private": true,
+  "type": "module",
+  "description": "A private music player for Linux, Windows, and Android.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "android:build": "python3 scripts/build_android.py",
+    "test": "node --test tests/core.test.mjs",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}
