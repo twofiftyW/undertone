@@ -45,7 +45,8 @@ if __name__ == "__main__":
     subprocess.run([str(gradle / "bin/gradle"), "--no-daemon", "-p", str(ROOT / "android"), "assembleRelease", "lintRelease"], env=env, check=True)
     build_tools = TOOLS / "android-sdk/build-tools/35.0.0"
     unsigned = ROOT / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
-    release = json.loads((ROOT / "package.json").read_text())["version"]
+    metadata = json.loads((unsigned.parent / "output-metadata.json").read_text())
+    release = next(item["versionName"] for item in metadata["elements"] if item["outputFile"] == unsigned.name)
     output = ROOT / "dist/android" / f"Undertone-{release}-android.apk"
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as stage:

@@ -1,10 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { trackWindowRange } from '../web/track-window.js';
 import { nextIndex, escapeHTML, fileMetadata, formatTime, matches, rankTracks, sortReleases, emptyLibrary } from "../web/core.js";
 import { insertUpNext, listeningArtists, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry } from '../web/core.js';
 import { appLanguage, countLabel, setLanguage, tr } from '../web/i18n.js';
 import { isFileDrag, searchTracks } from '../web/core.js';
 import { savedTrackMetadata, isDuplicateImport } from '../web/library.js';
+
+test('large track windows cover the viewport after fast jumps including both ends of a list', () => {
+  const count = 2191;
+  assert.deepEqual(trackWindowRange(count, 3000, 800), { start: 0, end: 0 });
+  assert.deepEqual(trackWindowRange(count, -count * 62 - 3000, 800), { start: count, end: count });
+  for (const height of [320, 800, 1280]) {
+    for (const first of [0, 2120, 130, 1400, 3, 2190]) {
+      const { start, end } = trackWindowRange(count, -first * 62 - 20, height);
+      assert.ok(start >= 0 && start <= first);
+      assert.ok(end <= count && end >= Math.min(count, first + Math.ceil((height + 20) / 62)));
+      assert.ok(end - start < 110);
+    }
+  }
+});
 
 test('new entries come first in Up next without replacing the active occurrence', () => {
   const active = { id: 'duplicate', queueKey: 'active' };

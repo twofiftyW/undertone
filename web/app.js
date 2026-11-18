@@ -6,6 +6,7 @@ import { LinuxPlayer } from "./player.js";
 import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
+import { TrackWindows } from './track-window.js';
 import { swipeToQueue } from './swipe.js';
 import { appLanguage, setLanguage, tr, countLabel, translateStatic } from './i18n.js';
 
@@ -14,6 +15,7 @@ const icon = (name, extra = "") => `<svg class="icon ${extra}" aria-hidden="true
 const nativeAudio = window.UndertoneAudio;
 await restoreAppIcon();
 const platform = native ? await native.invoke('platform') : 'browser';
+const trackWindows = platform === 'android' ? new TrackWindows() : null;
 const linuxPlayback = platform === 'linux';
 const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
 const audio = linuxPlayback ? new LinuxPlayer(native) : $("#audio");
@@ -199,7 +201,26 @@ function getTrack(id) {
   return tracks.get(id) || library.tracks[id];
 }
 function getTracks(ids) { return ids.map(getTrack).filter(Boolean); }
-function isLiked(id) { return library.liked.includes(id); }
+let likedSource;
+let likedIds;
+function isLiked(id) {
+  // Library edits and sync replace the liked array, so one index serves every visible row.
+  if (library.liked !== likedSource) {
+    likedSource = library.liked;
+    likedIds = new Set(likedSource);
+  }
+  return likedIds.has(id);
+}
+
+function playlistCover(ids) {
+  const coverTracks = [];
+  for (const id of ids) {
+    const track = tracks.get(id) || library.tracks[id];
+    if (track) coverTracks.push(track);
+    if (coverTracks.length === 4) break;
+  }
+  return art({ coverTracks });
+}
 function playlist() { return library.playlists.find((p) => `playlist:${p.id}` === page); }
 
 function art(track, lazy = true) {
@@ -219,13 +240,23 @@ function trackCard(track) {
 
 function trackRows(list, albumId = "", playlistPositions = null) {
   if (!list.length) return "";
-  return `<div class="table-heading"><span>#</span><span>${h(tr("TITLE"))}</span><span>${h(tr("ALBUM"))}</span><span>${h(tr("TIME"))}</span><span></span></div><div class="track-list">${list.map((track, index) => `
-    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${index}"${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
+  const windowed = trackWindows && list.length > 80;
+  const row = index => {
+    const original = list[index];
+    const resolved = original.source === 'unmatched' && spotifyState?.resolved.get(original.id);
+    const track = resolved ? getTrack(resolved) || original : original;
+    const liked = isLiked(track.id);
+    return `
+    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${index}"${windowed ? ` role="listitem" aria-posinset="${index + 1}" aria-setsize="${list.length}"` : ""}${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
       <button class="track-number" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}"><span>${index + 1}</span>${icon("play")}</button>
       <div class="row-song"><button class="thumb art-placeholder" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}">${art(track)}</button><div class="song-meta"><button class="song-title" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}">${h(track.title)}</button><div class="row-artists">${track.source === "unmatched" ? `<span class="unmatched-badge">${h(tr("Choose recording"))}</span>` : ""}${canDownload(track) && library.downloads[track.id]?.nativePath ? `<span class="downloaded-badge">${h(tr("Offline"))}</span>` : ""}${track.explicit ? `<span class="explicit-badge" aria-label="${h(tr("Explicit"))}">E</span>` : ""}${artistLinks(track)}${track.kind === "video" ? `<span class="video-badge">${h(tr("VIDEO"))}</span>` : ""}</div></div></div>
       <span class="row-source">${track.album?.id ? `<button class="album-link" data-action="open-album" data-id="${h(track.album.id)}">${h(track.album.title)}</button>` : track.source === "local" ? tr("Your files · Offline") : track.source === "monochrome" ? "Monochrome" : track.source === "unmatched" ? tr("Spotify import · Choose recording") : track.source === "youtube" ? "YouTube" : "Audius"}</span>
-      <span class="row-duration" data-duration-for="${h(track.id)}">${track.duration ? formatTime(track.duration) : "—"}</span><span class="row-actions"><button class="icon-btn add-queue-button" data-action="queue-add-track" data-id="${h(track.id)}" aria-label="${h(tr('Add {title} to queue', { title: track.title }))}" title="${h(tr("Add to queue"))}">${icon("plus")}</button><button class="icon-btn ${isLiked(track.id) ? "liked" : ""}" data-action="like" data-id="${h(track.id)}" aria-label="${isLiked(track.id) ? tr("Unlike") : tr("Like")} ${h(track.title)}" aria-pressed="${isLiked(track.id)}">${icon("heart")}</button><button class="icon-btn" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></span>
-    </div>`).join("")}</div>`;
+      <span class="row-duration" data-duration-for="${h(track.id)}">${track.duration ? formatTime(track.duration) : "—"}</span><span class="row-actions"><button class="icon-btn add-queue-button" data-action="queue-add-track" data-id="${h(track.id)}" aria-label="${h(tr('Add {title} to queue', { title: track.title }))}" title="${h(tr("Add to queue"))}">${icon("plus")}</button><button class="icon-btn ${liked ? "liked" : ""}" data-action="like" data-id="${h(track.id)}" aria-label="${liked ? tr("Unlike") : tr("Like")} ${h(track.title)}" aria-pressed="${liked}">${icon("heart")}</button><button class="icon-btn" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></span>
+    </div>`;
+  };
+  const rows = windowed ? trackWindows.placeholder(list.length, row)
+    : `<div class="track-list">${list.map((_, index) => row(index)).join("")}</div>`;
+  return `<div class="table-heading"><span>#</span><span>${h(tr("TITLE"))}</span><span>${h(tr("ALBUM"))}</span><span>${h(tr("TIME"))}</span><span></span></div>${rows}`;
 }
 
 function empty(iconName, title, message, action = "discover", label = tr("Find some music")) {
@@ -355,6 +386,7 @@ function observeReleaseTracks() {
       ensureAlbum(id).then(album => {
         if (!node.isConnected) return;
         node.innerHTML = trackRows(album.tracks, id);
+        trackWindows?.mount(node);
         const count = node.closest(".release-block").querySelector(".release-track-count");
         count.textContent = ` · ${countLabel(album.tracks.length)}`;
         const cover = node.closest('.release-block').querySelector('[data-cover-album]');
@@ -401,17 +433,18 @@ function renderCollection() {
 }
 
 function renderLibrary() {
-  const cards = sortPlaylists(library.playlists).map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${art({ tracks: getTracks(p.trackIds) })}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
+  const cards = sortPlaylists(library.playlists).map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
   return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="spotify-import">${icon("import")}${h(tr("Import Spotify"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
 }
 
 function renderSidebar() {
   $("#liked-count").textContent = library.liked.length;
-  $("#playlist-nav").innerHTML = sortPlaylists(library.playlists).map((p) => `<button class="playlist-link ${page === `playlist:${p.id}` ? "active" : ""}" data-view="playlist:${h(p.id)}"><span class="mini-cover">${art({ tracks: getTracks(p.trackIds) })}</span>${p.pinnedAt ? icon('pin', 'sidebar-pin') : ''}<span>${h(p.name)}</span></button>`).join("");
+  $("#playlist-nav").innerHTML = sortPlaylists(library.playlists).map((p) => `<button class="playlist-link ${page === `playlist:${p.id}` ? "active" : ""}" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span>${p.pinnedAt ? icon('pin', 'sidebar-pin') : ''}<span>${h(p.name)}</span></button>`).join("");
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === page || button.dataset.view === "library" && (page === "local" || page.startsWith("playlist:"))));
 }
 
 function render() {
+  trackWindows?.clear();
   document.body.classList.toggle("artist-page", page.startsWith("artist:"));
   document.body.classList.toggle("album-page", page.startsWith("album:"));
   document.body.classList.toggle("discography-page", page.startsWith("discography:"));
@@ -423,6 +456,7 @@ function render() {
   $("#clear-search").classList.toggle("hidden", !query);
   if ($("#navigate-back")) $("#navigate-back").disabled = !navigationHistory.length;
   renderSidebar();
+  trackWindows?.mount(view);
   observeReleaseTracks();
 }
 
@@ -520,7 +554,7 @@ async function loadCatalog(force = false) {
 }
 
 function navigationSnapshot() {
-  return { page, query, searchCategory, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
+  return { page, sort, query, searchCategory, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
 }
 
 function navigate(next, remember = true) {
@@ -538,6 +572,7 @@ function navigate(next, remember = true) {
   remoteStatus = "ready";
   render();
   window.scrollTo({ top: 0 });
+  trackWindows?.refresh();
   if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog();
   if (next === "search") requestAnimationFrame(() => $("#search").focus());
 }
@@ -548,6 +583,7 @@ function goBack() {
   ++requestId;
   clearTimeout(searchTimer);
   page = previous.page;
+  sort = previous.sort;
   query = previous.query;
   searchCategory = previous.searchCategory;
   artistReleaseTab = previous.artistReleaseTab;
@@ -560,9 +596,15 @@ function goBack() {
     const loaded = loadCatalog();
     const restoringRequest = requestId;
     loaded.then(() => {
-      if (requestId === restoringRequest) window.scrollTo({ top: previous.scroll });
+      if (requestId === restoringRequest) {
+        window.scrollTo({ top: previous.scroll });
+        trackWindows?.refresh();
+      }
     });
-  } else window.scrollTo({ top: previous.scroll });
+  } else {
+    window.scrollTo({ top: previous.scroll });
+    trackWindows?.refresh();
+  }
 }
 
 if (platform === 'android') {
@@ -764,6 +806,10 @@ async function primeNextTrack() {
 }
 
 function renderQueue() {
+  if (nativeAudio && $("#queue-panel").classList.contains("hidden")) {
+    $("#queue-content").replaceChildren();
+    return;
+  }
   $("#queue-content").innerHTML = `<button class="secondary-btn queue-add-button" data-action="queue-add">${icon('plus')}${h(tr("Add songs"))}</button><p class="queue-hint">${h(tr(nativeAudio ? "Use the arrow buttons to reorder songs." : "Drag to reorder, or use the arrow buttons."))}</p>` + (!queue.length ? `<p class="queue-empty">${h(tr("Add songs from Search or any song’s menu."))}</p>` : `${queueIndex > 0 ? `<p class="queue-caption">${h(tr("EARLIER"))}</p>` : ''}${queue.map((track, index) => `${index === queueIndex ? `<p class="queue-caption">${h(tr("NOW PLAYING"))}</p>` : index === queueIndex + 1 ? `<p class="queue-caption">${h(tr("UP NEXT"))}</p>` : ''}<div class="queue-item ${index === queueIndex ? 'current' : ''}" draggable="true" data-queue-key="${h(track.queueKey)}"><button class="queue-track" data-action="queue-play" data-index="${index}"><span class="thumb art-placeholder">${art(track)}</span><div><strong>${h(track.title)}</strong><small>${h(track.artist)} · ${formatTime(track.duration)}</small></div></button><div class="queue-controls"><button class="icon-btn" data-action="queue-move" data-index="${index}" data-direction="-1" aria-label="${h(tr('Move {title} up', { title: track.title }))}" ${index === 0 ? 'disabled' : ''}>${icon('up')}</button><button class="icon-btn" data-action="queue-move" data-index="${index}" data-direction="1" aria-label="${h(tr('Move {title} down', { title: track.title }))}" ${index === queue.length - 1 ? 'disabled' : ''}>${icon('down')}</button>${index !== queueIndex ? `<button class="icon-btn" data-action="queue-remove" data-index="${index}" aria-label="${h(tr('Remove {title} from queue', { title: track.title }))}">${icon('close')}</button>` : ''}</div></div>`).join('')}`);
   $("#queue-content").insertAdjacentHTML("afterbegin", `<button class="autoplay-switch" data-action="autoplay" aria-pressed="${autoplay}"><span>${h(tr("Autoplay artist mix"))}</span><span>${autoplay ? tr("On") : tr("Off")}</span></button>`);
 }
@@ -898,7 +944,8 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha 0.0.5-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
+  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.5-alpha";
+  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
 async function metadata(file) {
@@ -1594,7 +1641,9 @@ if (nativeAudio) {
       if (state.session && state.session !== queueSession) return;
       if (state.error && state.error !== lastNativeError) { lastNativeError = state.error; toast(state.error, 6500); }
       if (!state.error) lastNativeError = "";
-      const index = state.key ? queue.findIndex(t => t.queueKey === state.key) : state.index;
+      const index = state.key && queue[state.index]?.queueKey !== state.key
+        ? queue.findIndex(t => t.queueKey === state.key)
+        : state.index;
       if (index >= 0 && queue[index] && (queueIndex !== index || current?.queueKey !== queue[index].queueKey)) {
         queueIndex = index;
         current = queue[queueIndex];

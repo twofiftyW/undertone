@@ -163,6 +163,7 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     }
 
     @JavascriptInterface fun getAppIcon(): String = reply { launcherIcons.current() }
+    @JavascriptInterface fun appVersion(): String = BuildConfig.VERSION_NAME
     @JavascriptInterface fun setAppIcon(id: String): String = reply { launcherIcons.select(id) }
 
     @JavascriptInterface fun beginImport(): String = reply { FileOutputStream(File(context.filesDir, "spotify-import.tmp")).use { }; true }
