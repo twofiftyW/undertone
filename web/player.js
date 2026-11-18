@@ -1,3 +1,88 @@
+const PRELOAD_WINDOW_SECONDS = 10;
+
+export function isStreamingAudio(source) {
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && url.hostname !== 'asset.localhost';
+  } catch { return false; }
+}
+
+export function inPreloadWindow(audio) {
+  const remaining = audio.duration - audio.currentTime;
+  return !audio.paused && remaining > 0 && remaining <= PRELOAD_WINDOW_SECONDS;
+}
+
+const mediaEvents = ['play', 'pause', 'loadedmetadata', 'timeupdate', 'ended', 'error'];
+
+// Windows uses the WebView's media engine. Keep the element that owns the buffer.
+export class BrowserPlayer extends EventTarget {
+  constructor(element, createAudio = () => new Audio()) {
+    super();
+    this._active = element;
+    this._createAudio = createAudio;
+    this._next = null;
+    this.entry = '';
+    this._forward = event => this.dispatchEvent(new Event(event.type));
+    for (const name of mediaEvents) element.addEventListener(name, this._forward);
+  }
+
+  get src() { return this._active.src; }
+  get duration() { return this._active.duration; }
+  get paused() { return this._active.paused; }
+  get error() { return this._active.error; }
+  get currentTime() { return this._active.currentTime; }
+  set currentTime(value) { this._active.currentTime = value; }
+  get volume() { return this._active.volume; }
+  set volume(value) { this._active.volume = value; }
+  get muted() { return this._active.muted; }
+  set muted(value) { this._active.muted = value; }
+  load() { this._active.load(); }
+  play() { return this._active.play(); }
+  pause() { this._active.pause(); }
+
+  removeAttribute(name) {
+    this._active.removeAttribute(name);
+    if (name === 'src') this.entry = '';
+  }
+
+  setSource(url, key) {
+    this.entry = key;
+    this._active.src = url;
+  }
+
+  _release(element) {
+    element.pause();
+    element.removeAttribute('src');
+    element.load();
+  }
+
+  async prepareNext(next) {
+    if (this._next) this._release(this._next.element);
+    this._next = null;
+    if (!next) return;
+    const element = this._createAudio();
+    element.preload = 'auto';
+    element.src = next.url;
+    this._next = { key: next.key, element };
+  }
+
+  takePreloaded(key) {
+    const next = this._next;
+    if (next?.key !== key || next.element.error) return false;
+    const previous = this._active;
+    for (const name of mediaEvents) previous.removeEventListener(name, this._forward);
+    this._release(previous);
+    this._next = null;
+    this._active = next.element;
+    this.entry = key;
+    this.volume = previous.volume;
+    this.muted = previous.muted;
+    // This element may still be loading. Calling load() or setting src here would discard its buffer.
+    for (const name of mediaEvents) next.element.addEventListener(name, this._forward);
+    return true;
+  }
+}
+
 // Linux uses mpv for audio; the bundled interface keeps the same player controls.
 export class LinuxPlayer extends EventTarget {
   constructor(native) {
