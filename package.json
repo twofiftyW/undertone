@@ -1,6 +1,6 @@
 {
   "name": "undertone",
-  "version": "0.0.1-alpha",
+  "version": "0.0.2-alpha",
   "private": true,
   "type": "module",
   "description": "A private music player for Linux, Windows, and Android.",

@@ -15,14 +15,39 @@ export function fileMetadata(filename) {
     : { artist: "Your files", title: name || "Untitled" };
 }
 
-export function nextIndex(index, length, { direction = 1, shuffle = false, repeat = "off", ended = false, random = Math.random } = {}) {
+export function isFileDrag(transfer) {
+  return transfer?.types.includes("Files") === true;
+}
+
+export function nextIndex(index, length, { direction = 1, repeat = "off", ended = false } = {}) {
   if (!length) return -1;
   if (ended && repeat === "one") return index;
-  if (shuffle && length > 1) return (index + 1 + Math.floor(random() * (length - 1))) % length;
   const next = index + direction;
   if (next >= 0 && next < length) return next;
   if (repeat === "all") return (next + length) % length;
   return -1;
+}
+
+// Keep occurrence keys so repeated songs and queue edits retain their own places.
+export function shuffleQueueKeys(queue, activeKey, previous = [], random = Math.random) {
+  const newKeys = new Set(queue.map(track => track.queueKey));
+  if (!newKeys.has(activeKey)) return [];
+  const order = previous.filter(key => newKeys.delete(key));
+  if (newKeys.delete(activeKey)) order.push(activeKey);
+  const remaining = [...newKeys];
+  for (let i = remaining.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [remaining[i], remaining[j]] = [remaining[j], remaining[i]];
+  }
+  return [...order, ...remaining];
+}
+
+export function nextQueueIndex(queue, index, shuffleOrder, options) {
+  if (!shuffleOrder?.length) return nextIndex(index, queue.length, options);
+  const position = shuffleOrder.indexOf(queue[index]?.queueKey);
+  if (position < 0) return -1;
+  const next = nextIndex(position, shuffleOrder.length, options);
+  return next < 0 ? -1 : queue.findIndex(track => track.queueKey === shuffleOrder[next]);
 }
 
 export function matches(track, query) {
@@ -52,9 +77,30 @@ export function rankTracks(list, query) {
   return [...unique.values()].sort((a, b) => score(b) - score(a));
 }
 
+export function searchTracks(results, category) {
+  return category === "videos" ? results.videos || [] : results.tracks;
+}
+
 export function sortReleases(releases, filter = "all", sort = "date") {
   return [...releases].filter((r) => filter === "all" || (filter === "albums" ? r.type.toLowerCase() === "album" : r.type.toLowerCase() !== "album"))
     .sort((a, b) => sort === "name" ? a.title.localeCompare(b.title) : (b.releaseDate || b.year || "").localeCompare(a.releaseDate || a.year || ""));
+}
+
+// Stable sorting preserves the relative order of rows with the same track ID.
+export function playlistRowPositions(trackIds, displayedTracks) {
+  const positions = new Map();
+  for (let i = trackIds.length - 1; i >= 0; i--) {
+    const id = trackIds[i];
+    if (!positions.has(id)) positions.set(id, []);
+    positions.get(id).push(i);
+  }
+  return displayedTracks.map(track => positions.get(track.id).pop());
+}
+
+export function removePlaylistEntry(trackIds, index, trackId) {
+  if (!Number.isInteger(index) || trackIds[index] !== trackId) return false;
+  trackIds.splice(index, 1);
+  return true;
 }
 
 export function sortPlaylists(playlists) {

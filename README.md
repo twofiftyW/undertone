@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone 0.0.1-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A private music player for Linux, Windows, and Android. **Undertone 0.0.2-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Open `Undertone-0.0.1-alpha.apk` on your phone. This build uses the same signing key as the previous Undertone APK.
+- **Android:** Open `Undertone-0.0.2-alpha.apk` on your phone. Updating an existing installation requires an APK signed with the same key.
 
 Use **Language → Русский** in the top bar to switch the interface. The setting is saved on each device.
 
@@ -81,7 +81,7 @@ Optional checks include `cargo test --manifest-path src-tauri/Cargo.toml --lib`,
 
 ## Android and PC connection
 
-Install the signed **dist/android/Undertone-0.0.1-alpha.apk** on your phone. Transfer it by USB or your usual file-sharing method, open it in the phone’s file manager, and allow installation from that app if Android asks. It is a standalone app with the music engine included: Monochrome search, artist pages, playback, Spotify export import, and offline downloads work without your PC. Background audio uses Android’s media service and lock-screen controls. Updates use the existing private signing key.
+Install the signed **dist/android/Undertone-0.0.2-alpha.apk** on your phone. Transfer it by USB or your usual file-sharing method, open it in the phone’s file manager, and allow installation from that app if Android asks. It is a standalone app with the music engine included: Monochrome search, artist pages, playback, Spotify export import, and offline downloads work without your PC. Background audio uses Android’s media service and lock-screen controls. Updates use the existing private signing key.
 
 To copy your PC library:
 
@@ -101,6 +101,6 @@ Build Android with `python3 scripts/android_setup.py` once, then `python3 script
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.1-alpha-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.2-alpha-windows-x64.zip`.
 
 See the release notes for build verification. Android signing material is kept under ignored `.private/`. User libraries and downloaded music are stored separately from the app.

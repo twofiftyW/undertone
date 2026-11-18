@@ -1,7 +1,8 @@
-import { formatTime, escapeHTML as h, fileMetadata, nextIndex, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
+import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
+import { isFileDrag, searchTracks } from "./core.js";
 import { nativeRuntime as native, musicRequest } from "./runtime.js";
 import { LinuxPlayer } from "./player.js";
-import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary } from "./library.js";
+import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
 import { swipeToQueue } from './swipe.js';
@@ -31,6 +32,7 @@ let queue = [];
 let queueIndex = -1;
 let current = null;
 let shuffle = false;
+let shuffleOrder = [];
 let repeat = "off";
 let playing = false;
 let loading = false;
@@ -82,7 +84,7 @@ function currentArtist() { return artists.get(pageId()); }
 function followed(id) { return library.followedArtists.some((a) => a.id === id); }
 
 function registerCatalog(data) {
-  for (const t of [...(data.tracks || []), ...(data.videos || [])]) {
+  for (const t of [...(data.videos || []), ...(data.tracks || [])]) {
     tracks.set(t.id, t);
     for (const a of t.artists || []) if (a.id && !artists.has(a.id)) artists.set(a.id, a);
   }
@@ -179,13 +181,21 @@ function saveLibrary() {
 }
 
 function remember(track) {
-  const { queueKey, playlistId, ...metadata } = track;
-  const saved = { ...metadata, spotifyUris: [...new Set([...(library.tracks[track.id]?.spotifyUris || []), ...(track.spotifyUris || [])])] };
+  const saved = savedTrackMetadata(track, library.tracks[track.id]);
   tracks.set(saved.id, saved);
   library.tracks[saved.id] = saved;
 }
 
-function getTrack(id) { return tracks.get(id) || library.tracks[id]; }
+function getTrack(id) {
+  if (id?.startsWith("youtube:")) {
+    if (page === "search") {
+      const result = searchTracks(searchData, searchCategory).find(track => track.id === id);
+      if (result) return result;
+    }
+    if (library.tracks[id]) return library.tracks[id];
+  }
+  return tracks.get(id) || library.tracks[id];
+}
 function getTracks(ids) { return ids.map(getTrack).filter(Boolean); }
 function isLiked(id) { return library.liked.includes(id); }
 function playlist() { return library.playlists.find((p) => `playlist:${p.id}` === page); }
@@ -205,12 +215,12 @@ function trackCard(track) {
     <button class="icon-btn more-card" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></article>`;
 }
 
-function trackRows(list, albumId = "") {
+function trackRows(list, albumId = "", playlistPositions = null) {
   if (!list.length) return "";
   return `<div class="table-heading"><span>#</span><span>${h(tr("TITLE"))}</span><span>${h(tr("ALBUM"))}</span><span>${h(tr("TIME"))}</span><span></span></div><div class="track-list">${list.map((track, index) => `
-    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${index}">
+    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${index}"${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
       <button class="track-number" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}"><span>${index + 1}</span>${icon("play")}</button>
-      <div class="row-song"><button class="thumb art-placeholder" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}">${art(track)}</button><div class="song-meta"><button class="song-title" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}">${h(track.title)}</button><div class="row-artists">${track.source === "unmatched" ? `<span class="unmatched-badge">${h(tr("Choose recording"))}</span>` : ""}${library.downloads[track.id]?.nativePath ? `<span class="downloaded-badge">${h(tr("Offline"))}</span>` : ""}${track.explicit ? `<span class="explicit-badge" aria-label="${h(tr("Explicit"))}">E</span>` : ""}${artistLinks(track)}${track.kind === "video" ? `<span class="video-badge">${h(tr("VIDEO"))}</span>` : ""}</div></div></div>
+      <div class="row-song"><button class="thumb art-placeholder" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}">${art(track)}</button><div class="song-meta"><button class="song-title" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}">${h(track.title)}</button><div class="row-artists">${track.source === "unmatched" ? `<span class="unmatched-badge">${h(tr("Choose recording"))}</span>` : ""}${canDownload(track) && library.downloads[track.id]?.nativePath ? `<span class="downloaded-badge">${h(tr("Offline"))}</span>` : ""}${track.explicit ? `<span class="explicit-badge" aria-label="${h(tr("Explicit"))}">E</span>` : ""}${artistLinks(track)}${track.kind === "video" ? `<span class="video-badge">${h(tr("VIDEO"))}</span>` : ""}</div></div></div>
       <span class="row-source">${track.album?.id ? `<button class="album-link" data-action="open-album" data-id="${h(track.album.id)}">${h(track.album.title)}</button>` : track.source === "local" ? tr("Your files · Offline") : track.source === "monochrome" ? "Monochrome" : track.source === "unmatched" ? tr("Spotify import · Choose recording") : track.source === "youtube" ? "YouTube" : "Audius"}</span>
       <span class="row-duration" data-duration-for="${h(track.id)}">${track.duration ? formatTime(track.duration) : "—"}</span><span class="row-actions"><button class="icon-btn add-queue-button" data-action="queue-add-track" data-id="${h(track.id)}" aria-label="${h(tr('Add {title} to queue', { title: track.title }))}" title="${h(tr("Add to queue"))}">${icon("plus")}</button><button class="icon-btn ${isLiked(track.id) ? "liked" : ""}" data-action="like" data-id="${h(track.id)}" aria-label="${isLiked(track.id) ? tr("Unlike") : tr("Like")} ${h(track.title)}" aria-pressed="${isLiked(track.id)}">${icon("heart")}</button><button class="icon-btn" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></span>
     </div>`).join("")}</div>`;
@@ -248,7 +258,7 @@ function renderSearch() {
   if (!query) return `<div class="search-intro"><span class="eyebrow">${h(tr("LESS DIGGING. MORE LISTENING."))}</span><h1>${h(tr("Songs. Artists. Albums."))}</h1><p>${h(tr("Find a recording, explore an artist, or play an entire release."))}</p><div class="search-prompts">${recommendationArtists().map(({ name }) => `<button class="chip" data-action="search-name" data-name="${h(name)}">${icon("search")}${h(name)}</button>`).join("")}</div></div>${library.followedArtists.length ? `<section class="music-section"><div class="section-heading"><h2>${h(tr("Your artists"))}</h2></div><div class="artist-grid">${library.followedArtists.slice(0, 6).map(artistCard).join("")}</div></section>` : ""}`;
   const tabs = [["all", tr("All")], ["songs", tr("Songs")], ["artists", tr("Artists")], ["albums", tr("Albums")], ["videos", tr("Music videos")]];
   const localMatches = getTracks(library.imports).filter(t => matches(t, query));
-  const music = searchData.tracks || [];
+  const music = searchTracks(searchData, searchCategory);
   const exactArtist = searchData.artists?.find(a => a.name.normalize("NFKC").toLocaleLowerCase() === query.normalize("NFKC").toLocaleLowerCase());
   let output = `<div class="search-page-heading"><div><span class="eyebrow">${h(tr("FIND YOUR SOUND"))}</span><h1>${h(tr('Results for “{query}”', { query }))}</h1></div><span class="search-status">${videoLoading ? `<i class="loading-dot"></i>${h(tr("Checking YouTube for more matches…"))}` : remoteStatus === "ready" ? countLabel(music.length, 'recording') : tr("Searching…")}</span></div><div class="search-filters" aria-label="${h(tr("Search result types"))}">${tabs.map(([value, label]) => `<button class="chip ${searchCategory === value ? "active" : ""}" data-action="search-filter" data-filter="${value}" aria-pressed="${searchCategory === value}">${label}</button>`).join("")}</div>`;
   if (remoteStatus === "loading") return output + skeleton();
@@ -256,7 +266,7 @@ function renderSearch() {
   if (searchData.notice) output += `<p class="catalog-notice">${h(tr(searchData.notice))}</p>`;
   if (searchCategory !== 'videos') output += `<button class="text-button fallback-search" data-action="search-youtube">${h(tr("Search YouTube songs too"))}</button>`;
   if (searchCategory === "videos" && videoLoading && !searchData.fallbackLoaded) return output + skeleton();
-  if (!music.length && !searchData.artists?.length && !searchData.albums?.length && !localMatches.length) return output + empty("search", tr("No matches for this one."), tr("Try the artist’s name, a shorter title, or another spelling."), "focus-search", tr("Try another search"));
+  if (searchCategory !== "videos" && !music.length && !searchData.artists?.length && !searchData.albums?.length && !localMatches.length) return output + empty("search", tr("No matches for this one."), tr("Try the artist’s name, a shorter title, or another spelling."), "focus-search", tr("Try another search"));
   if (searchCategory === "all") {
     const best = exactArtist || music[0] || searchData.artists?.[0];
     const top = best ? `<section class="top-result"><h2>${h(tr("Top result"))}</h2><article class="top-result-card ${best.name ? "is-artist" : ""}"><button class="top-result-art art-placeholder" data-action="${best.name ? "open-artist" : "play"}" data-id="${h(best.id)}" aria-label="${best.name ? tr("Open") : tr("Play")} ${h(best.name || best.title)}">${art(best)}</button><button class="top-result-name" data-action="${best.name ? "open-artist" : "play"}" data-id="${h(best.id)}">${h(best.name || best.title)}</button><div class="top-result-meta">${best.name ? `<span class="entity-badge">${h(tr("Artist"))}</span>` : `${artistLinks(best)}<span class="entity-badge">${best.kind === "video" ? tr("Music video") : tr("Song")}</span>`}</div><button class="top-result-action" data-action="${best.name ? "open-artist" : "play"}" data-id="${h(best.id)}" aria-label="${best.name ? tr("Open artist") : tr("Play top result")}">${icon(best.name ? "arrow" : "play")}</button></article></section>` : "";
@@ -266,8 +276,7 @@ function renderSearch() {
   } else if (searchCategory === "artists") output += searchData.artists.length ? `<div class="artist-grid">${searchData.artists.map(artistCard).join("")}</div>` : `<p class="catalog-empty">${h(tr("No artist matches. Try searching only the artist’s name."))}</p>`;
   else if (searchCategory === "albums") output += searchData.albums.length ? `<div class="release-grid">${searchData.albums.map(releaseCard).join("")}</div>` : `<p class="catalog-empty">${h(tr("No album matches for this search."))}</p>`;
   else {
-    const list = searchCategory === "videos" ? music.filter(t => t.kind === "video") : music.filter(t => t.kind !== "video");
-    output += list.length ? trackRows(list) : `<p class="catalog-empty">${videoLoading ? tr("Looking for matching videos…") : searchCategory !== 'videos' ? h(tr('No song matches for this search.')) : `${h(tr('No video results yet.'))} <button class="text-button" data-action="more-videos">${h(tr('Search YouTube videos'))}</button>`}</p>`;
+    output += music.length ? trackRows(music) : `<p class="catalog-empty">${videoLoading ? tr("Looking for matching videos…") : searchCategory !== 'videos' ? h(tr('No song matches for this search.')) : `${h(tr('No video results yet.'))} <button class="text-button" data-action="more-videos">${h(tr('Search YouTube videos'))}</button>`}</p>`;
   }
   if (localMatches.length) output += `<section class="music-section" data-context="local-search"><div class="section-heading"><h2>${h(tr("From your files"))}</h2></div>${trackRows(localMatches)}</section>`;
   return output;
@@ -367,7 +376,10 @@ function collectionTracks() {
   if (page === "local") return sortedTracks(library.imports);
   if (page === "downloads") return sortedTracks(Object.keys(library.downloads).filter(id => library.downloads[id]?.nativePath));
   if (page.startsWith("playlist:")) return sortedTracks(playlist()?.trackIds || []);
-  if (page === "search") return searchCategory === "videos" ? searchData.tracks.filter(t => t.kind === "video") : [...getTracks(library.imports).filter((t) => matches(t, query)), ...searchData.tracks.filter(t => t.kind !== "video")];
+  if (page === "search") {
+    const results = searchTracks(searchData, searchCategory);
+    return searchCategory === "videos" ? results : [...getTracks(library.imports).filter(t => matches(t, query)), ...results];
+  }
   if (page.startsWith("artist:")) return currentArtist()?.tracks || [];
   if (page.startsWith("album:")) return albums.get(pageId())?.tracks || [];
   if (page.startsWith("discography:")) return filteredReleases().flatMap(r => albums.get(r.id)?.tracks || []);
@@ -383,7 +395,7 @@ function renderCollection() {
   const title = downloaded ? tr("Downloads") : liked ? tr("Liked songs") : local ? tr("Your music, here.") : collection.name;
   const list = collectionTracks();
   const subtitle = downloaded ? tr("Saved on this device. Playback uses these files before the internet.") : liked ? tr("All the songs that felt like a yes.") : local ? tr("Imported audio saved on this device.") : tr("A little collection, entirely your own.");
-  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import">${icon("plus")}${h(tr("Add music"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Choose audio files") : tr("Explore music"))}`;
+  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import">${icon("plus")}${h(tr("Add music"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Choose audio files") : tr("Explore music"))}`;
 }
 
 function renderLibrary() {
@@ -424,9 +436,9 @@ async function loadMoreVideos(ticket = requestId, force = false) {
     const canonicalArtists = [...artists.values()].filter(a => a.id.startsWith("mono:artist:") && q.toLocaleLowerCase().includes(a.name.toLocaleLowerCase())).slice(0, 8).map(a => ({ id: a.id, name: a.name }));
     const result = await musicRequest("videos", { query: q, force, artists: canonicalArtists });
     if (ticket !== requestId || page !== "search" || query !== q) return;
-    searchData = { ...searchData, tracks: rankTracks([...searchData.tracks, ...result.tracks], q), fallbackLoaded: true };
+    searchData = { ...searchData, videos: rankTracks(result.tracks, q), fallbackLoaded: true };
     registerCatalog(searchData);
-    remoteTracks = searchData.tracks;
+    remoteTracks = searchTracks(searchData, searchCategory);
     catalogCache.set(q, searchData);
   } catch (error) {
     if (ticket === requestId && page === "search") toast(tr("Extra video results couldn’t load. The music results are still available."));
@@ -447,9 +459,9 @@ async function loadCatalog(force = false) {
   try {
     if (target === "search") {
       const previous = catalogCache.get(q);
+      searchData = previous || { tracks: [], artists: [], albums: [] };
       if (searchCategory === "videos") {
-        searchData = previous || { tracks: [], artists: [], albums: [] };
-        remoteTracks = searchData.tracks;
+        remoteTracks = searchTracks(searchData, searchCategory);
         remoteStatus = "ready";
         if (force || !searchData.fallbackLoaded) await loadMoreVideos(ticket, force);
         else render();
@@ -458,7 +470,8 @@ async function loadCatalog(force = false) {
       const result = !force && previous?.musicLoaded ? previous : await musicRequest("search", { query: q, force });
       if (ticket !== requestId) return;
       searchData = { ...result, musicLoaded: true };
-      if (!force && previous?.fallbackLoaded) searchData = { ...searchData, tracks: rankTracks([...result.tracks, ...previous.tracks.filter(t => t.kind === "video")], q), fallbackLoaded: true };
+      const cached = catalogCache.get(q);
+      if (!force && cached?.fallbackLoaded) searchData = { ...searchData, videos: cached.videos, fallbackLoaded: true };
       registerCatalog(searchData);
       remoteTracks = searchData.tracks;
       catalogCache.set(q, searchData);
@@ -614,7 +627,12 @@ function recordRecent(track, playedAt) {
 
 async function playAt(index, list = queue, force = false, playlistId = null) {
   if (!list[index]) return;
-  if (linuxPlayback && !force && list === queue && index !== queueIndex && await audio.advance(list[index].queueKey)) return;
+  const ticket = ++playTicket;
+  if (linuxPlayback && !force && list === queue) {
+    const advanced = await audio.advance(list[index].queueKey);
+    if (advanced || ticket !== playTicket) return;
+  }
+  const existingQueue = list === queue;
   const selected = playableSelection(list, index);
   list = selected.tracks;
   index = selected.index;
@@ -623,11 +641,15 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
   queue = queueEntries(list, playlistId);
   queueIndex = index;
   current = queue[index];
-  const ticket = ++playTicket;
+  if (shuffle && !nativeAudio && (!existingQueue || !shuffleOrder.length)) {
+    shuffleOrder = shuffleQueueKeys(queue, current.queueKey, shuffleOrder);
+  }
   ++preloadRequest; preparedNextKey = '';
   queueSession = crypto.randomUUID();
   loading = true;
-  if (!linuxPlayback) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+  if (!linuxPlayback) audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
   updatePlayer();
   updateProgress(0, current.duration);
   if (nativeAudio) {
@@ -694,9 +716,8 @@ async function step(direction, ended = false) {
   if (nativeAudio) { nativeAudio.command(direction > 0 ? "next" : "previous", ""); return; }
   if (direction < 0 && audio.currentTime > 3) { audio.currentTime = 0; return; }
   const planned = queue.findIndex(t => t.queueKey === preparedNextKey);
-  const index = direction > 0 && planned >= 0 && (ended || planned !== queueIndex) ? planned : nextIndex(queueIndex, queue.length, { direction, shuffle, repeat, ended });
-  if (linuxPlayback && index >= 0 && await audio.advance(queue[index].queueKey)) return;
-  if (index >= 0) playAt(index);
+  const index = direction > 0 && planned >= 0 && (ended || planned !== queueIndex) ? planned : nextQueueIndex(queue, queueIndex, shuffle && shuffleOrder, { direction, repeat, ended });
+  if (index >= 0) return playAt(index);
   else if (direction > 0 && autoplay && current.source === "monochrome") extendRadio();
   else if (ended) { playing = false; updatePlayIcons(); }
   else if (direction < 0) audio.currentTime = 0;
@@ -706,8 +727,7 @@ async function step(direction, ended = false) {
 async function primeNextTrack() {
   if (!linuxPlayback || !current || audio.entry !== current.queueKey) return;
   const mode = `${shuffle}:${repeat}`;
-  const existing = queue.findIndex(t => t.queueKey === preparedNextKey);
-  const index = shuffle && mode === preloadMode && existing >= 0 && existing !== queueIndex ? existing : nextIndex(queueIndex, queue.length, { shuffle, repeat, ended: true });
+  const index = nextQueueIndex(queue, queueIndex, shuffle && shuffleOrder, { repeat, ended: true });
   const upcoming = queue[index];
   if ((upcoming?.queueKey || '') === preparedNextKey && mode === preloadMode) return;
   const request = ++preloadRequest, fromKey = current.queueKey;
@@ -727,6 +747,7 @@ function renderQueue() {
 }
 
 function syncQueue() {
+  if (shuffle && !nativeAudio) shuffleOrder = shuffleQueueKeys(queue, current?.queueKey, shuffleOrder);
   if (nativeAudio && current) nativeAudio.replaceQueue(JSON.stringify({ tracks: androidQueue(), index: queueIndex, session: queueSession, shuffle, repeat }));
   else primeNextTrack();
   updatePlayer();
@@ -763,9 +784,8 @@ async function pinPlaylist(id) {
   await saveLibrary(); render();
 }
 
-async function likeTrack(id) {
+async function likeTrack(id, track = getTrack(id)) {
   if (!storageReady) { toast(tr("Restart the app to reopen your library before making changes.")); return; }
-  const track = getTrack(id);
   if (!track) return;
   const liked = isLiked(id);
   remember(track);
@@ -801,11 +821,11 @@ function playlistDialog(rename = false) {
   requestAnimationFrame(() => $("#playlist-name").focus());
 }
 
-function trackMenu(id) {
+function trackMenu(id, playlistIndex) {
   const track = getTrack(id);
   if (!track) return;
   pendingTrack = id;
-  openDialog(`${dialogTop(track.title)}<p class="dialog-description">${h(track.artist)}</p><div class="dialog-menu">${track.source === "unmatched" ? `<button class="menu-item" data-action="find-spotify-match" data-id="${h(track.id)}">${icon("search")}${h(tr("Choose a recording"))}</button>` : ""}${canDownload(track) ? `<button class="menu-item" data-action="${library.downloads[track.id]?.nativePath ? "remove-download" : "download-track"}" data-id="${h(track.id)}">${icon("download")}${library.downloads[track.id]?.nativePath ? tr("Remove download") : tr("Download for offline listening")}</button>` : ""}<button class="menu-item" data-action="add-queue">${icon("queue")}${h(tr("Add to queue"))}</button><button class="menu-item" data-action="menu-like">${icon("heart")}${isLiked(id) ? tr("Remove from liked songs") : tr("Add to liked songs")}</button>${track.source === "monochrome" ? `<button class="menu-item" data-action="track-radio">${icon("disc")}${h(tr("Start artist mix"))}</button>${track.artists?.some(a => a.id) ? `<button class="menu-item" data-action="menu-artist">${icon("music")}${h(tr("Go to artist"))}</button>` : ""}${track.album?.id ? `<button class="menu-item" data-action="menu-album">${icon("disc")}${h(tr("Go to album"))}</button>` : ""}` : ""}<div class="menu-subtitle">${h(tr("ADD TO A PLAYLIST"))}</div>${library.playlists.map((p) => `<button class="menu-item" data-action="add-playlist-track" data-id="${h(p.id)}">${icon("music")}${h(p.name)}${p.trackIds.includes(id) ? icon("check") : ""}</button>`).join("")}<button class="menu-item" data-action="create-for-track">${icon("plus")}${h(tr("Create new playlist"))}</button>${playlist() ? `<div class="menu-subtitle">${h(tr("THIS PLAYLIST"))}</div><button class="menu-item" data-action="remove-playlist-track">${icon("trash")}${h(tr("Remove from playlist"))}</button>` : ""}${track.source === "local" ? `<div class="menu-subtitle">${h(tr("LOCAL FILE"))}</div><button class="menu-item danger" data-action="remove-local">${icon("trash")}${h(tr("Remove imported copy"))}</button>` : ""}</div>`);
+  openDialog(`${dialogTop(track.title)}<p class="dialog-description">${h(track.artist)}</p><div class="dialog-menu">${track.source === "unmatched" ? `<button class="menu-item" data-action="find-spotify-match" data-id="${h(track.id)}">${icon("search")}${h(tr("Choose a recording"))}</button>` : ""}${canDownload(track) ? `<button class="menu-item" data-action="${library.downloads[track.id]?.nativePath ? "remove-download" : "download-track"}" data-id="${h(track.id)}">${icon("download")}${library.downloads[track.id]?.nativePath ? tr("Remove download") : tr("Download for offline listening")}</button>` : ""}<button class="menu-item" data-action="add-queue">${icon("queue")}${h(tr("Add to queue"))}</button><button class="menu-item" data-action="menu-like">${icon("heart")}${isLiked(id) ? tr("Remove from liked songs") : tr("Add to liked songs")}</button>${track.source === "monochrome" ? `<button class="menu-item" data-action="track-radio">${icon("disc")}${h(tr("Start artist mix"))}</button>${track.artists?.some(a => a.id) ? `<button class="menu-item" data-action="menu-artist">${icon("music")}${h(tr("Go to artist"))}</button>` : ""}${track.album?.id ? `<button class="menu-item" data-action="menu-album">${icon("disc")}${h(tr("Go to album"))}</button>` : ""}` : ""}<div class="menu-subtitle">${h(tr("ADD TO A PLAYLIST"))}</div>${library.playlists.map((p) => `<button class="menu-item" data-action="add-playlist-track" data-id="${h(p.id)}">${icon("music")}${h(p.name)}${p.trackIds.includes(id) ? icon("check") : ""}</button>`).join("")}<button class="menu-item" data-action="create-for-track">${icon("plus")}${h(tr("Create new playlist"))}</button>${playlist()?.trackIds[playlistIndex] === id ? `<div class="menu-subtitle">${h(tr("THIS PLAYLIST"))}</div><button class="menu-item" data-action="remove-playlist-track" data-index="${playlistIndex}">${icon("trash")}${h(tr("Remove from playlist"))}</button>` : ""}${track.source === "local" ? `<div class="menu-subtitle">${h(tr("LOCAL FILE"))}</div><button class="menu-item danger" data-action="remove-local">${icon("trash")}${h(tr("Remove imported copy"))}</button>` : ""}</div>`);
 }
 
 async function addTrackToPlaylist(playlistId, trackId) {
@@ -822,7 +842,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img src="./icon.svg" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone 0.0.1-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
+  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img src="./icon.svg" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone 0.0.2-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
 async function metadata(file) {
@@ -864,15 +884,20 @@ async function importFiles(files) {
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
       const id = `local:${hash}`;
-      if (library.imports.includes(id)) { duplicates++; continue; }
+      const listed = library.imports.includes(id);
+      const previous = library.tracks[id];
+      if (await isDuplicateImport(listed, previous, file.size, platform === "android" ? native : null)) {
+        duplicates++;
+        continue;
+      }
       const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
-      const fileId = `${hash}.${extension}`;
-      const duration = await metadata(file);
+      const fileId = previous?.fileId || `${hash}.${extension}`;
+      const duration = previous?.duration || await metadata(file);
       const nativePath = native ? await native.invoke("save_audio", new Uint8Array(bytes), { headers: { "x-audio-id": fileId } }) : undefined;
       if (!native) await idbWrite("files", fileId, file);
-      const track = { id, fileId, ...fileMetadata(file.name), source: "local", genre: "Your files", duration, artwork: "", nativePath };
+      const track = { ...fileMetadata(file.name), genre: "Your files", artwork: "", ...previous, id, fileId, source: "local", duration, nativePath };
       remember(track);
-      library.imports.unshift(id);
+      if (!listed) library.imports.unshift(id);
       await saveLibrary();
       added++;
     } catch (error) { console.error(error); failed++; }
@@ -1127,6 +1152,8 @@ function useSpotifyRecording(oldId, candidate) {
     const holder = document.createElement('div');
     holder.innerHTML = trackRows([track]);
     const replacement = holder.querySelector('.track-row');
+    replacement.dataset.trackPosition = row.dataset.trackPosition;
+    if (row.dataset.playlistIndex !== undefined) replacement.dataset.playlistIndex = row.dataset.playlistIndex;
     if (number) replacement.querySelector('.track-number span').textContent = number;
     row.replaceWith(replacement);
   }
@@ -1263,15 +1290,20 @@ const actions = {
   "play-pause": togglePlayback,
   previous: () => step(-1),
   next: () => step(1),
-  shuffle: () => { shuffle = !shuffle; updateModes(); if (nativeAudio) nativeAudio.command("shuffle", String(shuffle)); else primeNextTrack(); },
+  shuffle: () => {
+    shuffle = !shuffle;
+    shuffleOrder = shuffle && !nativeAudio ? shuffleQueueKeys(queue, current?.queueKey) : [];
+    updateModes();
+    if (nativeAudio) nativeAudio.command("shuffle", String(shuffle)); else primeNextTrack();
+  },
   repeat: () => { repeat = { off: "all", all: "one", one: "off" }[repeat]; updateModes(); if (nativeAudio) nativeAudio.command("repeat", repeat); else primeNextTrack(); },
   mute: () => { audio.muted = !audio.muted; updateVolume(); if (nativeAudio) nativeAudio.command("volume", String(audio.muted ? 0 : audio.volume)); },
   queue: () => { const open = $("#queue-panel").classList.toggle("hidden") === false; $("#queue-toggle").classList.toggle("on", open); $("#queue-toggle").setAttribute("aria-expanded", open); renderQueue(); },
   "queue-play": (button) => playAt(Number(button.dataset.index)),
   expand: () => { if (window.innerWidth <= 650) document.body.classList.toggle("player-expanded"); else actions.queue(); },
   like: (button) => likeTrack(button.dataset.id),
-  "like-current": () => current && likeTrack(current.id),
-  "track-menu": (button) => trackMenu(button.dataset.id),
+  "like-current": () => current && likeTrack(current.id, current),
+  "track-menu": (button) => trackMenu(button.dataset.id, Number(button.closest(".track-row")?.dataset.playlistIndex)),
   "close-dialog": closeDialog,
   "create-playlist": () => { pendingTrack = null; playlistDialog(); },
   "rename-playlist": () => playlistDialog(true),
@@ -1285,7 +1317,14 @@ const actions = {
   "queue-add-done": () => { queueAddMode = false; render(); $('#queue-panel').classList.remove('hidden'); $('#queue-toggle').setAttribute('aria-expanded', 'true'); $('#queue-toggle').classList.add('on'); renderQueue(); },
   "queue-move": button => { const from = Number(button.dataset.index); reorderQueue(from, from + Number(button.dataset.direction)); },
   "queue-remove": button => { const index = Number(button.dataset.index); if (index === queueIndex || !queue[index]) return; queue.splice(index, 1); if (index < queueIndex) queueIndex--; syncQueue(); },
-  "remove-playlist-track": async () => { const p = playlist(); if (!p) return; p.trackIds = p.trackIds.filter((id) => id !== pendingTrack); await saveLibrary(); closeDialog(); render(); toast(tr("Removed from playlist")); },
+  "remove-playlist-track": async button => {
+    const p = playlist();
+    if (button.disabled || !p || !removePlaylistEntry(p.trackIds, Number(button.dataset.index), pendingTrack)) return;
+    button.disabled = true;
+    closeDialog(); render();
+    await saveLibrary();
+    toast(tr("Removed from playlist"));
+  },
   "remove-local": () => { openDialog(`${dialogTop(tr("Remove this imported copy?"))}<p class="dialog-description">${h(tr("This removes the song from this app, including liked songs and playlists. Your original file stays untouched."))}</p><div class="dialog-buttons"><button class="secondary-btn" data-action="close-dialog">${h(tr("Keep it"))}</button><button class="danger-btn" data-action="confirm-remove-local">${h(tr("Remove copy"))}</button></div>`); },
   "confirm-remove-local": () => removeLocal(pendingTrack),
   "delete-playlist": () => { openDialog(`${dialogTop(tr("Delete this playlist?"))}<p class="dialog-description">${h(playlist()?.name)} will be removed. Your music files and liked songs stay in your library.</p><div class="dialog-buttons"><button class="secondary-btn" data-action="close-dialog">${h(tr("Keep it"))}</button><button class="danger-btn" data-action="confirm-delete-playlist">${h(tr("Delete playlist"))}</button></div>`); },
@@ -1429,8 +1468,8 @@ document.addEventListener("error", (event) => {
   } else { const parent = event.target.parentElement; parent.innerHTML = icon('music'); parent.classList.add('art-placeholder'); }
 }, true);
 let dragDepth = 0;
-document.addEventListener("dragenter", (event) => { if (event.dataTransfer?.types.includes(tr("Files"))) { event.preventDefault(); dragDepth++; $("#drop-overlay").classList.remove("hidden"); } });
-document.addEventListener("dragover", (event) => { if (event.dataTransfer?.types.includes(tr("Files"))) event.preventDefault(); });
+document.addEventListener("dragenter", (event) => { if (isFileDrag(event.dataTransfer)) { event.preventDefault(); dragDepth++; $("#drop-overlay").classList.remove("hidden"); } });
+document.addEventListener("dragover", (event) => { if (isFileDrag(event.dataTransfer)) event.preventDefault(); });
 document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop-overlay").classList.add("hidden"); } });
 document.addEventListener("drop", (event) => { event.preventDefault(); dragDepth = 0; $("#drop-overlay").classList.add("hidden"); if (event.dataTransfer?.files.length) importFiles(event.dataTransfer.files); });
 $('#queue-content').addEventListener('dragstart', event => {

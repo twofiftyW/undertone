@@ -30,7 +30,39 @@ import java.io.File
 import java.util.concurrent.Executors
 import java.util.UUID
 import java.util.Locale
-import kotlin.random.Random
+
+// Keep the shuffle order by occurrence so preparing a track and advancing select the same entry.
+internal class PlaybackOrder {
+    private var keys = emptyList<String>()
+    private var shuffled = emptyList<String>()
+
+    fun update(queueKeys: List<String>, activeIndex: Int, shuffle: Boolean) {
+        keys = queueKeys
+        if (!shuffle || activeIndex !in keys.indices) {
+            shuffled = emptyList()
+            return
+        }
+        val added = keys.toMutableSet()
+        val kept = shuffled.filterTo(mutableListOf(), added::remove)
+        if (added.remove(keys[activeIndex])) kept.add(keys[activeIndex])
+        shuffled = kept + added.shuffled()
+    }
+
+    fun next(index: Int, direction: Int, ended: Boolean, repeat: String): Int {
+        if (index !in keys.indices) return -1
+        if (ended && repeat == "one") return index
+        val ordered = shuffled.isNotEmpty()
+        val size = if (ordered) shuffled.size else keys.size
+        val position = if (ordered) shuffled.indexOf(keys[index]) else index
+        val candidate = position + direction
+        val next = when {
+            candidate in 0 until size -> candidate
+            repeat == "all" -> (candidate + size) % size
+            else -> return -1
+        }
+        return if (ordered) keys.indexOf(shuffled[next]) else next
+    }
+}
 
 class PlaybackService : Service() {
     companion object {
@@ -56,6 +88,7 @@ class PlaybackService : Service() {
     private var loading = false
     private var wantsPlay = true
     private var shuffle = false
+    private val playbackOrder = PlaybackOrder()
     private var repeat = "off"
     private var volume = 0.8f
     private var error = ""
@@ -137,6 +170,7 @@ class PlaybackService : Service() {
                             sessionId = payload.optString("session", "")
                             language = if (payload.optString("language") == "ru") "ru" else "en"
                             shuffle = payload.optBoolean("shuffle", false)
+                            updateOrder()
                             repeat = payload.optString("repeat", "off")
                             volume = payload.optDouble("volume", 0.8).toFloat().coerceIn(0f, 1f)
                             startForeground(NOTIFICATION, notification())
@@ -147,6 +181,7 @@ class PlaybackService : Service() {
                             val activeIndex = (0 until tracks.length()).firstOrNull { trackKey(it) == activeKey }
                             index = activeIndex ?: payload.optInt("index", 0).coerceIn(0, tracks.length() - 1)
                             shuffle = payload.optBoolean("shuffle", shuffle)
+                            updateOrder()
                             repeat = payload.optString("repeat", repeat)
                             nextIndex = (0 until tracks.length()).firstOrNull { trackKey(it) == nextKey } ?: -1
                             if (activeIndex == null) loadTrack() else prepareNext()
@@ -159,7 +194,7 @@ class PlaybackService : Service() {
                 "previous" -> previous()
                 "seek" -> seek(((value.toDoubleOrNull() ?: 0.0) * 1000).toLong())
                 "volume" -> { volume = (value.toFloatOrNull() ?: volume).coerceIn(0f, 1f); applyVolume() }
-                "shuffle" -> { shuffle = value == "true"; clearNext(); prepareNext() }
+                "shuffle" -> { shuffle = value == "true"; updateOrder(); clearNext(); prepareNext() }
                 "repeat" -> { repeat = if (value in setOf("off", "one", "all")) value else "off"; clearNext(); prepareNext() }
                 "language" -> language = if (value == "ru") "ru" else "en"
                 "stop" -> { stopSelf(); return START_NOT_STICKY }
@@ -250,7 +285,7 @@ class PlaybackService : Service() {
         refresh()
     }
 
-    private fun previous() { if (position() > 3000 || index == 0 && repeat != "all") seek(0) else advance(-1) }
+    private fun previous() { if (position() > 3000 || chooseNext(-1, false) < 0) seek(0) else advance(-1) }
 
     private fun advance(direction: Int, ended: Boolean = false) {
         if (tracks.length() == 0) return
@@ -275,13 +310,9 @@ class PlaybackService : Service() {
         try { loadTrack() } catch (_: Exception) { fail("This track couldn’t start. Try another song.") }
     }
 
-    private fun chooseNext(direction: Int, ended: Boolean): Int = when {
-            ended && repeat == "one" -> index
-            shuffle && tracks.length() > 1 -> if (nextIndex in 0 until tracks.length() && nextIndex != index) nextIndex else (index + 1 + Random.nextInt(tracks.length() - 1)) % tracks.length()
-            index + direction in 0 until tracks.length() -> index + direction
-            repeat == "all" -> (index + direction + tracks.length()) % tracks.length()
-            else -> -1
-    }
+    private fun updateOrder() = playbackOrder.update((0 until tracks.length()).map(::trackKey), index, shuffle)
+
+    private fun chooseNext(direction: Int, ended: Boolean) = playbackOrder.next(index, direction, ended, repeat)
 
     private fun trackKey(position: Int): String = tracks.optJSONObject(position)?.let { it.optString("queueKey", it.optString("id", "")) } ?: ""
 

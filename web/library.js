@@ -1,3 +1,16 @@
+// A metadata-only PC copy can list a local track before the phone has its audio.
+export async function isDuplicateImport(listed, track, bytes, androidDevice) {
+  if (!listed || !androidDevice) return listed;
+  return !!(track?.nativePath && track.fileId && await androidDevice.invoke("has_audio", { id: track.fileId, bytes }));
+}
+
+export function savedTrackMetadata(track, previous) {
+  // YouTube song and video views share an ID. Playing its video must keep a saved song downloadable.
+  const keepSong = track.source === 'youtube' && track.kind === 'video' && previous?.source === 'youtube' && previous.kind !== 'video';
+  const { queueKey, playlistId, ...metadata } = keepSong ? previous : track;
+  return { ...metadata, spotifyUris: [...new Set([...(previous?.spotifyUris || []), ...(track.spotifyUris || [])])] };
+}
+
 export function canDownload(track) {
   return track?.source === 'monochrome' && /^\d{17,20}$/.test(String(track.remoteId)) || track?.source === 'youtube' && track.kind !== 'video' && /^[A-Za-z0-9_-]{11}$/.test(String(track.remoteId));
 }
@@ -40,7 +53,10 @@ export function mergePCLibrary(local, incoming, deviceId) {
   for (const [id, track] of Object.entries(incoming.tracks)) {
     const previous = merged.tracks[id];
     merged.tracks[id] = { ...previous, ...track };
-    if (previous?.nativePath && !track.nativePath) merged.tracks[id].nativePath = previous.nativePath;
+    if (previous?.nativePath && !track.nativePath) {
+      merged.tracks[id].nativePath = previous.nativePath;
+      if (previous.source === 'local' && previous.fileId) merged.tracks[id].fileId = previous.fileId;
+    }
   }
   merged.liked = [...new Set([...local.liked, ...incoming.liked])];
   merged.imports = [...new Set([...local.imports, ...incoming.imports])];

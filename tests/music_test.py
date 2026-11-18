@@ -2,7 +2,7 @@
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'music'))
-from backend import dispatch, track as video_track
+from backend import cached, dispatch, track as video_track
 from monochrome import track, release, artist_card, identifier, unique
 
 person = {'id': 'mono:artist:152942198986379264', 'name': 'DVRST'}
@@ -45,3 +45,45 @@ with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)),
     assert [song['id'] for section in home['sections'] for song in section['tracks']] == ['Sade', 'Björk']
     assert lookup.call_count == 2
 print('Home uses the supplied listening artists and removes already heard tracks.')
+
+seed = {'title': normalized['title'], 'artist': normalized['artist']}
+def match_import():
+    return dispatch('match', {'tracks': [seed]})['matches'][0]
+
+# The old cache could contain a false miss. A plain retry after reconnection must
+# find the song even after upgrading with that old cache entry still on disk.
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)):
+    cached('recording-match-v2', seed, lambda: {'track': None, 'candidates': []})
+    with patch('backend.monochrome.search', side_effect=[ValueError('offline'), {'tracks': [normalized]}]) as primary, \
+         patch('backend.youtube_info', side_effect=ValueError('offline')) as fallback:
+        assert match_import()['error'] is True
+        assert match_import()['track'] == normalized
+        assert match_import()['track'] == normalized
+        assert primary.call_count == 2 and fallback.call_count == 1
+
+# Keep partial candidates available for manual review, but do not save a miss
+# until both catalogs have answered.
+other = {**normalized, 'title': 'An alternative recording'}
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+     patch('backend.monochrome.search', return_value={'tracks': [other]}) as primary, \
+     patch('backend.youtube_info', side_effect=[ValueError('offline'), {'entries': []}]) as fallback:
+    partial = match_import()
+    assert partial['error'] and partial['candidates'] == [other]
+    complete = match_import()
+    assert not complete.get('error') and complete['candidates'] == [other] and complete['track'] is None
+    assert match_import() == complete
+    assert primary.call_count == fallback.call_count == 2
+
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+     patch('backend.monochrome.search', side_effect=[ValueError('offline'), {'tracks': [normalized]}]), \
+     patch('backend.youtube_info', return_value={'entries': []}):
+    assert match_import()['error'] is True
+    assert match_import()['track'] == normalized
+
+youtube_song = {**normalized, 'id': 'youtube:abcdefghijk', 'source': 'youtube', 'remoteId': 'abcdefghijk'}
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+     patch('backend.monochrome.search', side_effect=ValueError('offline')), \
+     patch('backend.youtube_search', return_value=[youtube_song]):
+    recovered = match_import()
+    assert recovered['track'] == youtube_song and not recovered.get('error')
+print('Spotify retries incomplete catalog lookups and caches completed matches and misses.')

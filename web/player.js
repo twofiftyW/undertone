@@ -19,6 +19,7 @@ export class LinuxPlayer extends EventTarget {
     this.entry = '';
     this._serial = 0;
     this._next = null;
+    this._prepareRequest = 0;
     this._sources = new Map();
     this._timer = setInterval(() => this._poll(), 150);
   }
@@ -29,7 +30,13 @@ export class LinuxPlayer extends EventTarget {
     return call;
   }
 
-  _fail(error) {
+  _control(operation, args) {
+    const version = this._version;
+    this._send(operation, args).catch(error => this._fail(error, version));
+  }
+
+  _fail(error, version = this._version) {
+    if (version !== this._version) return;
     const message = String(error?.message || error || "The Linux audio player could not play this recording.");
     if (this.error?.message === message) return;
     this.error = { message };
@@ -72,9 +79,10 @@ export class LinuxPlayer extends EventTarget {
 
   async _poll() {
     if (!this._loaded || this._polling || this.error) return;
+    const version = this._version;
     this._polling = true;
     try { this._apply(await this._send("state")); }
-    catch (error) { this._fail(error); }
+    catch (error) { this._fail(error, version); }
     finally { this._polling = false; }
   }
 
@@ -87,7 +95,7 @@ export class LinuxPlayer extends EventTarget {
     this.error = null;
     this.paused = true;
     this.entry = ''; this._serial = 0; this._next = null; this._sources.clear();
-    this._send("stop", { token: this._version }).catch(error => this._fail(error));
+    this._control("stop", { token: this._version });
     this.dispatchEvent(new Event("pause"));
   }
 
@@ -104,18 +112,31 @@ export class LinuxPlayer extends EventTarget {
   async prepareNext(next) {
     if (!this._loaded) return;
     if (next && (typeof next.url !== 'string' || !next.url)) throw new Error('The next audio file is missing.');
-    this._next = next;
+    const request = ++this._prepareRequest;
+    const args = { token: this._version, fromKey: this.entry, serial: this._serial, ...(next || {}) };
+    this._next = null;
     if (next) {
       this._sources.set(next.key, next.url);
       if (this._sources.size > 4) this._sources.delete(this._sources.keys().next().value);
     }
-    this._apply(await this._send('prepare', { token: this._version, fromKey: this.entry, serial: this._serial, ...(next || {}) }));
+    const state = await this._send('prepare', args);
+    this._apply(state);
+    if (request === this._prepareRequest && args.token === this._version && state.token === args.token &&
+        state.key === args.fromKey && state.serial === args.serial) this._next = next;
   }
 
   async advance(key) {
     if (this._next?.key !== key) return false;
-    this._apply(await this._send('next', { key }));
-    return true;
+    const version = this._version;
+    try {
+      const state = await this._send('next', { key });
+      if (version !== this._version || state.token !== version) return false;
+      this._apply(state);
+      return true;
+    } catch {
+      // The caller can still open the selected track through a fresh load.
+      return false;
+    }
   }
 
   async play() {
@@ -151,7 +172,7 @@ export class LinuxPlayer extends EventTarget {
   pause() {
     ++this._intent;
     this.paused = true;
-    if (this._loaded) this._send("pause", { paused: true }).catch(error => this._fail(error));
+    if (this._loaded) this._control("pause", { paused: true });
     this.dispatchEvent(new Event("pause"));
   }
 
@@ -159,7 +180,7 @@ export class LinuxPlayer extends EventTarget {
   set currentTime(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0 || !this._loaded) return;
     this._position = seconds;
-    this._send("seek", { seconds }).catch(error => this._fail(error));
+    this._control("seek", { seconds });
   }
   get volume() { return this._volume; }
   set volume(value) {
@@ -169,7 +190,7 @@ export class LinuxPlayer extends EventTarget {
   get muted() { return this._muted; }
   set muted(value) { this._muted = !!value; this._setVolume(); }
   _setVolume() {
-    if (this._loaded) this._send("volume", { volume: this._volume, muted: this._muted }).catch(error => this._fail(error));
+    if (this._loaded) this._control("volume", { volume: this._volume, muted: this._muted });
   }
   async restoreOutput() {
     this._apply(await this._send("restore_output"));

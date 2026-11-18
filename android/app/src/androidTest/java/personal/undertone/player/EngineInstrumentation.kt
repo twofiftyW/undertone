@@ -26,6 +26,15 @@ class EngineInstrumentation : Instrumentation() {
             val results = Bundle()
             try {
                 val context = targetContext
+                if (arguments.getString("shuffle_only") == "true") {
+                    val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    val bridge = PlaybackBridge(context)
+                    try { checkFiniteShuffle(bridge) }
+                    finally { bridge.command("stop", ""); runOnMainSync { activity.finish() } }
+                    results.putString("result", "PASS: finite Android shuffle and prepared handoffs")
+                    finish(Activity.RESULT_OK, results)
+                    return@Thread
+                }
                 if (arguments.getString("ui_only") == "true") {
                     val track = JSONObject().put("id", "local:swipe-fixture").put("fileId", "a".repeat(64) + ".wav").put("title", "Swipe fixture").put("source", "local").put("artist", "Your files")
                     val library = JSONObject().put("version", 1).put("tracks", JSONObject().put("local:swipe-fixture", track))
@@ -45,16 +54,6 @@ class EngineInstrumentation : Instrumentation() {
                 val bridge = PlaybackBridge(context)
                 val sample = JSONObject().put("id", "monochrome:159277913216937984").put("remoteId", "159277913216937984").put("source", "monochrome").put("kind", "song").put("title", "Close Eyes").put("artist", "DVRST").put("duration", 132)
                 fun queue() = JSONObject().put("tracks", org.json.JSONArray().put(sample)).put("index", 0).put("volume", 0).toString()
-                fun waitFor(message: String, condition: (JSONObject) -> Boolean) {
-                    val deadline = System.currentTimeMillis() + 45000
-                    do {
-                        val state = JSONObject(PlaybackService.snapshot)
-                        check(state.optString("error").isEmpty()) { state.optString("error") }
-                        if (condition(state)) return
-                        Thread.sleep(100)
-                    } while (System.currentTimeMillis() < deadline)
-                    error(message + ": " + PlaybackService.snapshot)
-                }
                 bridge.loadQueue(queue())
                 waitFor("Android streaming did not start") { it.optBoolean("playing") && it.optDouble("position") > 1 }
                 runOnMainSync { activity.moveTaskToBack(true) }
@@ -88,16 +87,6 @@ class EngineInstrumentation : Instrumentation() {
                 val storage = DeviceBridge(context) { _, _ -> }
                 library.getJSONArray("playlists").getJSONObject(0).put("pinnedAt", 123L)
                 check(!JSONObject(storage.saveLibrary(library.toString())).has("error"))
-                fun fixture(letter: Char): JSONObject {
-                    val filename = letter.toString().repeat(64) + ".wav"
-                    val samples = 8000 * 2 * 3
-                    val wav = ByteBuffer.allocate(44 + samples).order(ByteOrder.LITTLE_ENDIAN)
-                    wav.put("RIFF".toByteArray()).putInt(36 + samples).put("WAVEfmt ".toByteArray()).putInt(16)
-                    wav.putShort(1).putShort(1).putInt(8000).putInt(16000).putShort(2).putShort(16)
-                    wav.put("data".toByteArray()).putInt(samples)
-                    File(context.filesDir, "audio").apply { mkdirs() }.resolve(filename).writeBytes(wav.array())
-                    return JSONObject().put("id", "local:$letter").put("fileId", filename).put("source", "local").put("title", "Fixture $letter").put("duration", 3).put("queueKey", "fixture-$letter").put("playlistId", "pc-test")
-                }
                 val a = fixture('a'); val b = fixture('b'); val c = fixture('c')
                 fun payload(index: Int, vararg songs: JSONObject): String = JSONObject().put("tracks", org.json.JSONArray(songs.toList())).put("index", index).put("session", "queue-test").put("volume", 0).put("shuffle", false).put("repeat", "off").toString()
                 bridge.loadQueue(payload(0, a, b, c))
@@ -125,6 +114,7 @@ class EngineInstrumentation : Instrumentation() {
                 val previousSerial = JSONObject(PlaybackService.snapshot).getInt("serial")
                 bridge.command("seek", "2.6")
                 waitFor("Repeat handoff did not advance its playback identity") { it.optInt("serial") > previousSerial && it.optString("key") == "extra-c" && it.optBoolean("playing") }
+                checkFiniteShuffle(bridge)
                 bridge.command("stop", "")
                 val savedPlaylist = JSONObject(storage.loadLibrary()).getJSONObject("data").getJSONArray("playlists").getJSONObject(0)
                 check(savedPlaylist.getLong("pinnedAt") == 123L && savedPlaylist.getLong("lastPlayedAt") > 0L)
@@ -137,6 +127,63 @@ class EngineInstrumentation : Instrumentation() {
                 finish(Activity.RESULT_CANCELED, results)
             }
         }.start()
+    }
+
+    private fun waitFor(message: String, condition: (JSONObject) -> Boolean) {
+        val deadline = System.currentTimeMillis() + 45000
+        do {
+            val state = JSONObject(PlaybackService.snapshot)
+            check(state.optString("error").isEmpty()) { state.optString("error") }
+            if (condition(state)) return
+            Thread.sleep(100)
+        } while (System.currentTimeMillis() < deadline)
+        error(message + ": " + PlaybackService.snapshot)
+    }
+
+    private fun fixture(letter: Char): JSONObject {
+        val filename = letter.toString().repeat(64) + ".wav"
+        val samples = 8000 * 2 * 3
+        val wav = ByteBuffer.allocate(44 + samples).order(ByteOrder.LITTLE_ENDIAN)
+        wav.put("RIFF".toByteArray()).putInt(36 + samples).put("WAVEfmt ".toByteArray()).putInt(16)
+        wav.putShort(1).putShort(1).putInt(8000).putInt(16000).putShort(2).putShort(16)
+        wav.put("data".toByteArray()).putInt(samples)
+        File(targetContext.filesDir, "audio").apply { mkdirs() }.resolve(filename).writeBytes(wav.array())
+        return JSONObject().put("id", "local:$letter").put("fileId", filename).put("source", "local").put("title", "Fixture $letter").put("duration", 3).put("queueKey", "fixture-$letter").put("playlistId", "pc-test")
+    }
+
+    private fun checkFiniteShuffle(bridge: PlaybackBridge) {
+        val original = fixture('d')
+        val copy = JSONObject(original.toString()).put("queueKey", "second-occurrence")
+        fun queue(index: Int, vararg entries: JSONObject): String = JSONObject()
+            .put("tracks", JSONArray(entries.toList())).put("index", index).put("session", "shuffle-test")
+            .put("volume", 0).put("shuffle", true).put("repeat", "off").toString()
+        bridge.loadQueue(queue(1, original, copy))
+        waitFor("Shuffle did not prepare the other occurrence") {
+            it.optString("session") == "shuffle-test" && it.optString("key") == "second-occurrence" &&
+                it.optString("nextKey") == "fixture-d" && it.optBoolean("nextPrepared")
+        }
+        bridge.command("next", "")
+        waitFor("Explicit Next did not use the shuffle order") {
+            it.optString("key") == "fixture-d" && it.optInt("index") == 0 && it.optBoolean("playing")
+        }
+        bridge.command("previous", "")
+        waitFor("Previous did not return to the first shuffled occurrence") {
+            it.optString("key") == "second-occurrence" && it.optBoolean("nextPrepared")
+        }
+        bridge.replaceQueue(queue(0, copy, original))
+        waitFor("Reordering changed shuffle history or the current occurrence") {
+            it.optInt("index") == 0 && it.optString("key") == "second-occurrence" &&
+                it.optString("nextKey") == "fixture-d" && it.optBoolean("nextPrepared")
+        }
+        bridge.command("seek", "2.6")
+        waitFor("Natural end did not promote the prepared occurrence") {
+            it.optString("key") == "fixture-d" && it.optBoolean("playing") && it.optInt("index") == 1
+        }
+        val finalSerial = JSONObject(PlaybackService.snapshot).getInt("serial")
+        waitFor("Shuffled queue repeated after its final occurrence") {
+            check(it.optInt("serial") == finalSerial) { "Shuffle replayed an occurrence with repeat off" }
+            !it.optBoolean("playing") && !it.optBoolean("loading") && it.optString("nextKey").isEmpty()
+        }
     }
 
     private fun checkLanguageAndSwipe(activity: Activity, title: String) {

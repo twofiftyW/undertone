@@ -142,6 +142,10 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
         check(temporary.renameTo(File(context.filesDir, "library.json")))
         true
     }
+    @JavascriptInterface fun hasAudio(id: String, bytes: Int): String = reply {
+        val target = file(id)
+        target.isFile && target.length() == bytes.toLong()
+    }
     @JavascriptInterface fun beginAudio(id: String): String = reply { FileOutputStream(File(file(id).path + ".tmp")).use { }; true }
     @JavascriptInterface fun appendAudio(id: String, chunk: String): String = reply {
         require(chunk.length <= 512 * 1024)

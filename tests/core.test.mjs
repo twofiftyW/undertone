@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nextIndex, escapeHTML, fileMetadata, formatTime, matches, rankTracks, sortReleases, emptyLibrary } from "../web/core.js";
-import { insertUpNext, listeningArtists } from '../web/core.js';
+import { insertUpNext, listeningArtists, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry } from '../web/core.js';
 import { appLanguage, countLabel, setLanguage, tr } from '../web/i18n.js';
+import { isFileDrag, searchTracks } from '../web/core.js';
+import { savedTrackMetadata, isDuplicateImport } from '../web/library.js';
 
 test('new entries come first in Up next without replacing the active occurrence', () => {
   const active = { id: 'duplicate', queueKey: 'active' };
@@ -40,8 +42,6 @@ test("queue boundaries and imported metadata", () => {
   assert.equal(nextIndex(0, 3, { direction: -1 }), -1);
   assert.equal(nextIndex(1, 3, { repeat: "one", ended: true }), 1);
   assert.equal(nextIndex(1, 3, { repeat: "one" }), 2);
-  assert.equal(nextIndex(1, 3, { shuffle: true, random: () => 0 }), 2);
-  assert.equal(nextIndex(1, 3, { shuffle: true, random: () => 0.999 }), 0);
   assert.equal(nextIndex(0, 0), -1);
   assert.deepEqual(fileMetadata("Artist - Song_title.flac"), { artist: "Artist", title: "Song title" });
   assert.deepEqual(fileMetadata("my.song.mp3"), { artist: "Your files", title: "my.song" });
@@ -53,6 +53,59 @@ test("queue boundaries and imported metadata", () => {
   assert.deepEqual(emptyLibrary().followedArtists, []);
 });
 
+test('removing a sorted playlist row deletes only that occurrence in the stored playlist', () => {
+  const ids = ['A', 'B', 'missing', 'A', 'C'];
+  const displayed = ['C', 'A', 'A', 'B'].map(id => ({ id }));
+  const rows = playlistRowPositions(ids, displayed);
+  assert.deepEqual(rows, [4, 0, 3, 1]);
+  assert.equal(removePlaylistEntry(ids, rows[2], 'A'), true);
+  assert.deepEqual(ids, ['A', 'B', 'missing', 'C']);
+  assert.equal(removePlaylistEntry(ids, rows[2], 'A'), false, 'a stale menu cannot remove another track');
+});
+
+test('shuffle plays each occurrence once, goes back in order, and wraps only on repeat all', () => {
+  const queue = [{ id: 'A', queueKey: 'first' }, { id: 'B', queueKey: 'middle' }, { id: 'A', queueKey: 'last' }];
+  const order = shuffleQueueKeys(queue, 'middle', [], () => 0);
+  assert.deepEqual(order, ['middle', 'last', 'first']);
+  const next = (index, options) => nextQueueIndex(queue, index, order, options);
+  assert.equal(next(1, { ended: true }), 2);
+  assert.equal(next(1, { ended: false }), 2);
+  assert.equal(next(2, { ended: true }), 0);
+  assert.equal(next(0, { ended: true }), -1);
+  assert.equal(next(0, { ended: false }), -1);
+  assert.equal(next(0, { direction: -1 }), 2);
+  assert.equal(next(1, { direction: -1 }), -1);
+  assert.equal(next(0, { ended: true, repeat: 'all' }), 1);
+  assert.equal(next(0, { ended: true, repeat: 'one' }), 0);
+  const pair = queue.slice(0, 2), pairOrder = shuffleQueueKeys(pair, 'first');
+  assert.equal(nextQueueIndex(pair, 0, pairOrder, { ended: true }), 1);
+  assert.equal(nextQueueIndex(pair, 1, pairOrder, { ended: true }), -1);
+});
+
+test('shuffle prunes removed entries, incorporates new ones and resets for a new queue or toggle', () => {
+  const entries = (...keys) => keys.map(queueKey => ({ queueKey }));
+  const original = entries('a', 'b', 'c');
+  const previous = shuffleQueueKeys(original, 'b', [], () => 0);
+  assert.deepEqual(previous, ['b', 'c', 'a']);
+  const edited = entries('a', 'b', 'd', 'e');
+  const updated = shuffleQueueKeys(edited, 'b', previous, () => 0);
+  assert.deepEqual(updated, ['b', 'a', 'e', 'd']);
+  const added = insertUpNext(edited, 1, entries('explicit'), true);
+  assert.equal(added.queue[nextQueueIndex(added.queue, 1, null, {})].queueKey, 'explicit');
+  assert.deepEqual(shuffleQueueKeys(edited, 'a', [], () => 0.999), ['a', 'b', 'd', 'e']);
+  assert.deepEqual(shuffleQueueKeys(entries('x', 'y'), 'y', previous), ['y', 'x']);
+});
+
+test('removing the active shuffled song starts a fresh order on the next selection', () => {
+  const queue = ['A', 'B', 'C'].map(queueKey => ({ queueKey }));
+  const original = shuffleQueueKeys(queue, 'A', [], () => 0.999);
+  const remaining = queue.filter(entry => entry.queueKey !== 'B');
+  const stopped = shuffleQueueKeys(remaining, undefined, original);
+  assert.deepEqual(stopped, []);
+  const resumed = shuffleQueueKeys(remaining, 'A', stopped);
+  assert.equal(remaining[nextQueueIndex(remaining, 0, resumed, { ended: true })].queueKey, 'C');
+});
+
 test("search ranks originals and preserves canonical metadata when video results arrive", () => {
   const original = { id: "youtube:original", title: "Close Eyes", artist: "DVRST", kind: "song", album: { id: "album" } };
   const slowed = { id: "youtube:slowed", title: "Close Eyes Slowed Reverb", artist: "DVRST", kind: "song" };
@@ -62,6 +115,33 @@ test("search ranks originals and preserves canonical metadata when video results
   assert.deepEqual(ranked[0].album, { id: "album" });
   assert.equal(ranked.length, 3);
   assert.equal(rankTracks([original, slowed], "DVRST Close Eyes Slowed Reverb")[0].id, slowed.id);
+});
+
+test('file drags use the browser format in both interface languages', () => {
+  const before = appLanguage();
+  try {
+    for (const lang of ['en', 'ru']) {
+      setLanguage(lang);
+      assert.equal(isFileDrag({ types: ['Files'] }), true);
+      assert.equal(isFileDrag({ types: ['text/plain'] }), false);
+      assert.equal(isFileDrag(null), false);
+    }
+  } finally { setLanguage(before); }
+});
+
+test('a YouTube result can be played in either tab without changing a saved song into a video', () => {
+  const song = { id: 'youtube:ao4RCon11eY', remoteId: 'ao4RCon11eY', source: 'youtube', kind: 'song', title: 'Song', artist: 'Artist', spotifyUris: ['saved-uri'] };
+  const video = { ...song, title: 'Official video', kind: 'video', spotifyUris: [] };
+  const results = { tracks: rankTracks([song], 'Song'), videos: rankTracks([video, video], 'Song') };
+  assert.deepEqual(searchTracks(results, 'songs'), [song]);
+  assert.deepEqual(searchTracks(results, 'videos'), [video]);
+  assert.deepEqual(searchTracks({ tracks: [song] }, 'videos'), []);
+  assert.equal(canDownload(searchTracks(results, 'videos')[0]), false);
+  const saved = savedTrackMetadata({ ...video, queueKey: 'playing', playlistId: 'queue' }, song);
+  assert.deepEqual(saved, song);
+  assert.equal(canDownload(saved), true);
+  assert.deepEqual(savedTrackMetadata(video), video);
+  assert.deepEqual(savedTrackMetadata(song, video), song);
 });
 
 test("discography category filters and sorting leave the source collection intact", () => {
@@ -135,6 +215,43 @@ test('Linux prepared handoffs change the queue item without stopping or loading 
     assert.deepEqual(changed, ['second', 'second']);
     assert.equal(ended, 0, 'A stale end flag skipped the new queue entry');
     await assert.rejects(player.prepareNext({ key: 'missing' }), /file is missing/);
+  } finally { player.dispose(); }
+});
+
+test('Linux skips only a confirmed preload and can recover when an earlier preparation fails', async () => {
+  let state;
+  let rejectSlowPrepare, signalSlowStart;
+  const slowStarted = new Promise(resolve => { signalSlowStart = resolve; });
+  const skips = [];
+  const player = new LinuxPlayer({ invoke: async (_, { operation, args }) => {
+    if (operation === 'load') state = { token: args.token, key: args.key, serial: 0, ready: true, paused: false };
+    if (operation === 'prepare' && args.key === 'missing') throw new Error('Append failed');
+    if (operation === 'prepare' && args.url === '/slow') {
+      signalSlowStart();
+      await new Promise((_, reject) => { rejectSlowPrepare = reject; });
+    }
+    if (operation === 'next') {
+      skips.push(args.key);
+      state = { ...state, key: args.key, serial: state.serial + 1 };
+    }
+    return { ...state };
+  } });
+  try {
+    player.setSource('/playing', 'current');
+    await player.play();
+    await assert.rejects(player.prepareNext({ key: 'missing', url: '/missing' }), /Append failed/);
+    assert.equal(await player.advance('missing'), false);
+    const failed = assert.rejects(player.prepareNext({ key: 'retry', url: '/slow' }), /Interrupted/);
+    await slowStarted;
+    const premature = player.advance('retry');
+    const newer = player.prepareNext({ key: 'retry', url: '/working' });
+    rejectSlowPrepare(new Error('Interrupted'));
+    await failed;
+    await newer;
+    assert.equal(await premature, false);
+    assert.equal(await player.advance('retry'), true);
+    assert.equal(player.entry, 'retry');
+    assert.deepEqual(skips, ['retry']);
   } finally { player.dispose(); }
 });
 
@@ -225,6 +342,39 @@ test('a failed native load reports an error and can be retried', async () => {
 });
 
 import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack } from '../web/library.js';
+
+test('switching Linux tracks stops the old sound and ignores its delayed native errors', async () => {
+  let state = { token: 0, paused: true, ready: false };
+  let failPoll;
+  const player = new LinuxPlayer({ invoke: async (_, { operation, args }) => {
+    if (operation === 'load') state = { token: args.token, key: args.key, paused: false, ready: true };
+    if (operation === 'stop') state = { token: args.token, paused: true, ready: false };
+    if (operation === 'state' && failPoll === null) return new Promise((_, reject) => { failPoll = reject; });
+    return state;
+  } });
+  try {
+    player.setSource('/audio/a.wav', 'A');
+    await player.play();
+    // The previous track has a native state request in flight when the new track is selected.
+    failPoll = null;
+    const pending = player._poll();
+    await new Promise(resolve => setImmediate(resolve));
+    player.removeAttribute('src');
+    player.load();
+    failPoll(new Error('old audio disconnected'));
+    await pending;
+    await player._chain;
+    assert.equal(state.ready, false);
+    assert.equal(player.paused, true);
+    assert.equal(player.src, '');
+    assert.equal(player.error, null);
+    assert.equal(await player.advance('A'), false);
+    player.setSource('/audio/b.wav', 'B');
+    await player.play();
+    assert.equal(player.entry, 'B');
+    assert.equal(player.paused, false);
+  } finally { player.dispose(); }
+});
 import { mergePCLibrary } from '../web/library.js';
 import { coverCollage, coverSongs } from '../web/covers.js';
 
@@ -280,6 +430,33 @@ test('downloaded songs resolve from the device without resolving an internet str
   assert.equal(canDownload({ source: 'youtube', kind: 'video', remoteId: 'ao4RCon11eY' }), false);
   const streamed = await resolveCatalogAudio(track, { invoke: async () => null }, async () => ({ url: 'https://example.org/song' }));
   assert.equal(streamed.url, 'https://example.org/song');
+});
+
+test('a metadata-only PC import can be filled on Android and is skipped once its audio exists', async () => {
+  const incoming = emptyLibrary(), id = 'local:' + 'a'.repeat(64);
+  const fileId = 'a'.repeat(64) + '.wav';
+  incoming.imports = [id];
+  incoming.tracks[id] = { id, fileId, source: 'local', title: 'PC recording' };
+  const phone = mergePCLibrary(emptyLibrary(), incoming, 'b'.repeat(32));
+  const track = phone.tracks[id];
+  let present = false;
+  const android = { invoke: async (command, args) => {
+    assert.equal(command, 'has_audio');
+    assert.deepEqual(args, { id: fileId, bytes: 48 });
+    return present;
+  } };
+  const listed = phone.imports.includes(id);
+  assert.equal(listed, true);
+  assert.equal(await isDuplicateImport(listed, track, 48, android), false);
+  track.nativePath = '/audio/' + fileId;
+  assert.equal(await isDuplicateImport(listed, track, 48, android), false);
+  present = true;
+  assert.equal(await isDuplicateImport(listed, track, 48, android), true);
+  assert.equal(await isDuplicateImport(listed, track, 48, null), true);
+  incoming.tracks[id].fileId = 'a'.repeat(64) + '.weba';
+  const refreshed = mergePCLibrary(phone, incoming, 'b'.repeat(32));
+  assert.equal(refreshed.tracks[id].fileId, fileId);
+  assert.equal(refreshed.tracks[id].nativePath, track.nativePath);
 });
 
 test('Android requests return asynchronously, carry provider arguments, and expose engine errors', async () => {

@@ -57,10 +57,18 @@ with tempfile.TemporaryDirectory() as folder:
         except ValueError:
             pass
         result = device_sync.pair(phone, address, server.details()['code'])
-        assert result['paired'] and (phone / 'pc-link.json').stat().st_mode & 0o777 == 0o600
+        assert result['paired'] and (phone / 'pc-link.json').is_file()
+        if os.name == 'posix':
+            assert (phone / 'pc-link.json').stat().st_mode & 0o777 == 0o600
         data = device_sync.pull(phone, include_audio=False)
         assert data['copied'] == 0 and len(data['library']['playlists']) == 1
         assert 'nativePath' not in data['library']['tracks'][local['id']]
+        android_bridge.configure(str(phone), str(phone / 'cache'))
+        local_record = data['library']['tracks'][local['id']]
+        restored = phone / 'audio' / local_record['fileId']
+        restored.write_bytes((pc / 'audio' / audio_id).read_bytes())
+        assert android_bridge.dispatch('resolve_track', {'track': local_record})['url'] == str(restored)
+        restored.unlink()
         data = device_sync.pull(phone)
         assert data['copied'] == 3
         assert data['library']['playlists'][0]['trackIds'] == library['playlists'][0]['trackIds']

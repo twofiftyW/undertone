@@ -32,6 +32,8 @@ def cached(kind, args, fetch, ttl=3600, force=False):
         except (OSError, ValueError):
             pass
     result = fetch()
+    if isinstance(result, dict) and result.get('error'):
+        return result
     with tempfile.NamedTemporaryFile(mode='w', dir=CACHE, suffix='.tmp', delete=False, encoding='utf-8') as output:
         temporary = Path(output.name)
         output.write(json.dumps(result, ensure_ascii=False))
@@ -140,10 +142,12 @@ def youtube_info(value, flat=False):
         raise ValueError(str(error)) from error
 
 
-def youtube_search(query, canonical_artists, kind='video'):
+def youtube_search(query, canonical_artists, kind='video', *, report_errors=False):
     try:
         entries = youtube_info('ytsearch8:' + query, flat=True).get('entries', [])
-    except (ValueError, subprocess.TimeoutExpired):
+    except (ValueError, subprocess.TimeoutExpired) as error:
+        if report_errors:
+            raise ValueError("The music service couldn’t complete that request. Check your connection and try again.") from error
         return []
     def details(item):
         ident = str(item.get("id") or "")
@@ -228,7 +232,7 @@ def dispatch(operation, args):
             if not isinstance(seed, dict):
                 return {"track": None, "candidates": [], "reason": "Invalid recording metadata"}
             try:
-                return cached("recording-match-v2", seed, lambda: match_recording(seed), 43200, force)
+                return cached("recording-match-v3", seed, lambda: match_recording(seed), 43200, force)
             except ValueError as error:
                 return {"track": None, "candidates": [], "reason": str(error), "error": True}
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
@@ -337,14 +341,17 @@ def personalized_home(args, force):
 def match_recording(seed):
     try:
         result = monochrome.match_recording(seed)
-    except ValueError:
-        result = {'track': None, 'candidates': [], 'reason': ''}
-    if result['track']:
+    except ValueError as error:
+        result = {'track': None, 'candidates': [], 'reason': str(error), 'error': True}
+    if result['track'] or not seed.get('title') or not seed.get('artist'):
         return result
-    if not seed.get('title') or not seed.get('artist'):
-        return result
-    candidates = youtube_search(str(seed['artist']) + ' ' + str(seed['title']), [{'id': '', 'name': str(seed['artist'])}], 'song')
+    try:
+        candidates = youtube_search(str(seed['artist']) + ' ' + str(seed['title']), [{'id': '', 'name': str(seed['artist'])}], 'song', report_errors=True)
+    except ValueError as error:
+        return {**result, 'error': True, 'reason': str(error)}
     fallback = monochrome.choose_recording(seed, candidates)
+    if result.get('error') and not fallback['track']:
+        fallback.update(error=True, reason=result['reason'])
     return {**fallback, 'candidates': monochrome.unique([*fallback['candidates'], *result['candidates']])[:8], 'fallbackUsed': True}
 
 

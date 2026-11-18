@@ -27,6 +27,7 @@ function call(method, ...args) {
 async function invoke(command, args, options) {
   if (command === "load_library") return call("loadLibrary");
   if (command === "save_library") return call("saveLibrary", JSON.stringify(args.library));
+  if (command === "has_audio") return call("hasAudio", args.id, args.bytes);
   if (command === "delete_audio") return call("deleteAudio", args.id);
   if (command === "platform") return "android";
   if (command === 'spotify_help') return call('spotifyHelp');
