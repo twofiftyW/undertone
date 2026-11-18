@@ -78,18 +78,7 @@ def dispatch(operation, args):
         directory = IMPORTS / token
         path = directory / 'export'
         try:
-            result = backend.dispatch('spotify_parse', {'path': str(path), 'filename': args.get('filename')})
-            # WebView callbacks should contain only the preview, not a multi-MB script.
-            page = 0
-            for collection in result['collections']:
-                records = collection.pop('tracks')
-                collection['firstPage'] = page
-                for start in range(0, len(records), 32):
-                    with (directory / f'{page}.json').open('w', encoding='utf-8') as stream:
-                        json.dump(records[start:start + 32], stream, ensure_ascii=False, separators=(',', ':'))
-                    page += 1
-                collection['pageCount'] = page - collection['firstPage']
-            return result
+            return backend.dispatch('spotify_parse_pages', {'path': str(path), 'filename': args.get('filename')})
         finally:
             path.unlink(missing_ok=True)
     if operation == 'link_discover':

@@ -142,6 +142,20 @@ def parse(path, filename):
     return {'collections': collections, 'total': sum(len(c['tracks']) for c in collections)}
 
 
+def write_pages(result, directory):
+    # Return collection metadata through the bridge and read bounded track pages on demand.
+    page = 0
+    for entry in result['collections']:
+        records = entry.pop('tracks')
+        entry['firstPage'] = page
+        for start in range(0, len(records), 32):
+            with (directory / f'{page}.json').open('w', encoding='utf-8') as stream:
+                json.dump(records[start:start + 32], stream, ensure_ascii=False, separators=(',', ':'))
+            page += 1
+        entry['pageCount'] = page - entry['firstPage']
+    return result
+
+
 def from_url(value):
     """Read only metadata published in a public Spotify embed, without a login."""
     from urllib.parse import urlparse

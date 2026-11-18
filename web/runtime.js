@@ -58,17 +58,7 @@ async function invoke(command, args, options) {
         }
       }
       const parsed = await request('parse_spotify', { token, filename: options.headers['x-import-name'] });
-      for (const collection of parsed.collections) {
-        const { firstPage, pageCount } = collection;
-        delete collection.firstPage;
-        delete collection.pageCount;
-        collection.tracks = [];
-        for (let i = 0; i < pageCount; i++) {
-          collection.tracks.push(...JSON.parse(device.importPage(token, firstPage + i)));
-          if (i % 8 === 7) await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      }
-      return parsed;
+      return await readSpotifyPages(parsed, page => device.importPage(token, page));
     } finally {
       call('endImport', token);
     }
@@ -88,9 +78,39 @@ async function invoke(command, args, options) {
 
 export const nativeRuntime = window.__TAURI__?.core || (device ? { invoke, convertFileSrc: (path) => call("audioURL", path) } : null);
 
+async function readSpotifyPages(parsed, readPage) {
+  for (const collection of parsed.collections) {
+    const { firstPage, pageCount } = collection;
+    delete collection.firstPage;
+    delete collection.pageCount;
+    collection.tracks = [];
+    for (let i = 0; i < pageCount; i++) {
+      collection.tracks.push(...JSON.parse(await readPage(firstPage + i)));
+      if (i % 8 === 7) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  return parsed;
+}
+
 export async function parseSpotifyFile(file) {
-  const content = device ? file : new Uint8Array(await file.arrayBuffer());
-  return nativeRuntime.invoke('parse_spotify', content, { headers: { 'x-import-name': encodeURIComponent(file.name) } });
+  const filename = encodeURIComponent(file.name);
+  if (device) return nativeRuntime.invoke('parse_spotify', file, { headers: { 'x-import-name': filename } });
+  const token = await nativeRuntime.invoke('begin_spotify_file');
+  try {
+    for (let offset = 0; offset < file.size; offset += 262144) {
+      const bytes = new Uint8Array(await file.slice(offset, offset + 262144).arrayBuffer());
+      await nativeRuntime.invoke('append_spotify_file', bytes, { headers: { 'x-import-job': token } });
+    }
+    const parsed = await nativeRuntime.invoke('finish_spotify_file', { token, filename });
+    return await readSpotifyPages(parsed, page => nativeRuntime.invoke('spotify_file_page', { token, page }));
+  } finally {
+    await nativeRuntime.invoke('end_spotify_file', { token });
+  }
+}
+
+export function spotifyJobRequest(operation, args) {
+  if (device) return request(operation, args);
+  return nativeRuntime.invoke('spotify_job', { operation, args });
 }
 
 export async function musicRequest(operation, args = {}) {

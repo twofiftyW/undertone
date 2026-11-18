@@ -516,6 +516,8 @@ export const russian = {
   "Open playlist": "Открыть плейлист",
   "Resume matching": "Продолжить поиск совпадений",
   "Importing in the background": "Импорт идёт в фоне",
+  "Spotify import paused · {done} / {total}": "Импорт Spotify на паузе · {done} / {total}",
+  "Spotify import · {done} / {total}": "Импорт Spotify · {done} / {total}",
   "Import paused. Check your connection.": "Импорт приостановлен. Проверьте подключение к сети.",
   "Background import paused": "Фоновый импорт приостановлен",
   "Background import complete": "Фоновый импорт завершён",

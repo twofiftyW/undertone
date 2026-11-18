@@ -1,15 +1,11 @@
-"""Durable Android Spotify matching queue, separate from the user's editable library."""
+"""Durable Spotify matching queue, separate from the user's editable library."""
 from contextlib import closing, contextmanager
 import json
 import sqlite3
 import threading
 import uuid
 
-import backend
-
-
-# The foreground service owns the worker. Serialize even if Android briefly delivers
-# two starts, without holding a database transaction during a catalog request.
+# Serialize steps in each worker without holding a transaction during a catalog lookup.
 _worker = threading.Lock()
 
 
@@ -100,6 +96,7 @@ def start(root, args):
 
 
 def step(root, job_id):
+    import backend
     with _worker:
         with database(root) as db:
             current = status(db)

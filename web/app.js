@@ -1,6 +1,6 @@
 import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
 import { isFileDrag, searchTracks } from "./core.js";
-import { nativeRuntime as native, musicRequest, parseSpotifyFile } from "./runtime.js";
+import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequest } from "./runtime.js";
 import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { LinuxPlayer } from "./player.js";
@@ -18,7 +18,8 @@ await restoreAppIcon();
 const platform = native ? await native.invoke('platform') : 'browser';
 const trackWindows = native ? new TrackWindows() : null;
 const linuxPlayback = platform === 'linux';
-const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
+const desktop = linuxPlayback || platform === 'windows';
+const deviceStorage = desktop || !!nativeAudio;
 const audio = linuxPlayback ? new LinuxPlayer(native) : $("#audio");
 const view = $("#view");
 const dialog = $("#dialog");
@@ -84,8 +85,8 @@ let downloadsTotal = 0;
 let downloadErrors = [];
 let spotifyState = null;
 const resolvedSpotifyTracks = new Map();
-const spotifyJob = nativeAudio ? spotifyJobClient({
-  request: (operation, args) => native.invoke(operation, args),
+const spotifyJob = deviceStorage ? spotifyJobClient({
+  request: spotifyJobRequest,
   save: saveLibrary,
   apply: applySpotifyJobResults,
   update: updateSpotifyJobPanel,
@@ -967,7 +968,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.6-alpha";
+  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.7-alpha";
   openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
@@ -1407,6 +1408,14 @@ function spotifyBackgroundPanel() {
 
 let spotifyNeedsRender = false;
 function updateSpotifyJobPanel(job) {
+  if (desktop) {
+    const shortcut = $('#desktop-import-progress');
+    const mode = spotifyJobMode(job);
+    shortcut.hidden = !job.total || !['running', 'paused'].includes(mode);
+    if (!shortcut.hidden) {
+      shortcut.querySelector('span').textContent = tr(mode === 'paused' ? 'Spotify import paused · {done} / {total}' : 'Spotify import · {done} / {total}', { done: job.checked, total: job.total });
+    }
+  }
   if (job.state === 'running' || job.pending) spotifyNeedsRender = true;
   if (spotifyNeedsRender && job.state !== 'running' && !job.pending) {
     spotifyNeedsRender = false;
@@ -1617,6 +1626,10 @@ const actions = {
   "remove-download": async button => { const track = getTrack(button.dataset.id || pendingTrack); if (!track) return; await native.invoke("remove_download", { id: track.remoteId, source: track.source }); delete library.downloads[track.id]; await saveLibrary(); closeDialog(); render(); toast(tr("Downloaded copy removed. The song stays in your library.")); },
   "audio-output": () => showAudioOutput(),
   "import-from-spotify": button => openSpotifyImport(button.dataset.id || null),
+  "show-spotify-progress": () => {
+    openSpotifyImport(spotifyJob.state.playlistId || null);
+    spotifyJob.refresh();
+  },
   "import-from-file": button => {
     const input = $("#file-input");
     input.dataset.playlistId = button.dataset.id || '';
@@ -1922,12 +1935,20 @@ if (nativeAudio) {
 try { await loadLibrary(); }
 catch (error) { console.error(error); toast(tr("Your saved library could not be opened. It has been left untouched. Restart the app before saving changes."), 10000); }
 if (spotifyJob && storageReady) {
-  window.undertoneOpenSpotifyImport = () => {
+  const openImportProgress = () => {
     openSpotifyImport();
     spotifyJob.refresh();
   };
-  if (window.UndertoneDevice.consumeSpotifyImportIntent()) window.undertoneOpenSpotifyImport();
-  else spotifyJob.refresh();
+  if (desktop) {
+    window.undertoneOpenSpotifyImport = async () => {
+      if (await native.invoke('consume_spotify_import_intent')) openImportProgress();
+    };
+    window.undertoneOpenSpotifyImport().catch(console.error);
+  } else {
+    window.undertoneOpenSpotifyImport = openImportProgress;
+    if (window.UndertoneDevice.consumeSpotifyImportIntent()) openImportProgress();
+  }
+  spotifyJob.refresh();
   document.addEventListener('visibilitychange', () => spotifyJob.refresh());
 }
 if (nativeAudio) {

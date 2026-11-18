@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. The Android build is **0.0.7-alpha** and supports Android 8+ on arm64-v8a and x86_64. The Linux x86_64 and Windows 10/11 x64 builds are **0.0.6-alpha**.
+A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.7-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -36,7 +36,7 @@ Downloads cover Monochrome songs and matched YouTube song fallbacks, including S
 
 ## Import music
 
-Choose **Import** in Your library. **From a file** opens the device's audio picker. **From Spotify** accepts a playlist link or a Spotify export. In the published 0.0.6-alpha desktop builds the Spotify button is labeled **Import Spotify**.
+Choose **Import** in Your library. **From a file** opens the device's audio picker. **From Spotify** accepts a public playlist link or a Spotify export.
 
 To append tracks to an existing playlist, open that playlist and choose **Import** in its toolbar. Audio files are added in selection order. Spotify collections are added in export order, including repeated entries.
 
@@ -52,6 +52,8 @@ Playlist positions and repeated entries are retained. Existing liked-song member
 Export files are parsed on this device. Only song metadata needed for matching is looked up in the music catalog. ZIP files are read without extracting their contents; unrelated account-data JSON files are skipped. Supported limits are 32 MB per uploaded file, 100 MB of relevant expanded ZIP contents, and 20,000 song entries per import.
 
 On Android, confirming a Spotify import starts background matching. You can leave the app or turn off the screen. Tap the import notification or choose **Import → From Spotify** to see progress and resume after an interruption.
+
+On Windows and Linux, Spotify matching continues after you minimize or close the window. Reopen Undertone to apply the saved results. The progress button below the search bar opens the import controls, where you can pause or resume. Desktop notifications report completion or a connection interruption when your system allows them.
 
 Public Spotify playlist links are a best-effort alternative. Spotify may expose only a preview or no track list at all. The dialog labels preview imports; use an export for a complete playlist. Liked Songs and private collections require an export file. This import flow does not require configuring a Spotify developer app, and it does not copy Spotify’s encrypted audio files.
 
@@ -117,6 +119,6 @@ To build the Android release, run `python3 scripts/android_setup.py` once. Set `
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.6-alpha-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.7-alpha-windows-x64.zip`.
 
 The expected Android signing certificate SHA-256 is `ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb`. The build helper also reads the original keystore from `.private/android-signing.p12` and the password from `.private/android-signing-password`. Git ignores the `.private` directory. Restrict access to it to the Windows account or Unix user that signs the release. User libraries and downloaded music are stored separately from the app.

@@ -633,6 +633,47 @@ test('Android streams export bytes and restores paged tracks without a single ov
   } finally { globalThis.window = originalWindow; }
 });
 
+test('desktop imports use bounded binary writes, read each collection in order and clean up failed jobs', async () => {
+  const originalWindow = globalThis.window;
+  const content = new Uint8Array(600003).fill(41);
+  const file = new Blob([content]);
+  file.name = 'Тест 100%.csv';
+  file.arrayBuffer = () => { throw Error('Read entire file'); };
+  const parts = [];
+  let ends = 0, fail = false;
+  globalThis.window = { __TAURI__: { core: { async invoke(command, args, options) {
+    if (command === 'begin_spotify_file') return 'session';
+    if (command === 'spotify_job') return args;
+    if (command === 'append_spotify_file') {
+      assert.equal(options.headers['x-import-job'], 'session');
+      assert.ok(args.byteLength <= 262144);
+      parts.push(args);
+      return;
+    }
+    assert.equal(args.token, 'session');
+    if (command === 'finish_spotify_file') {
+      assert.equal(decodeURIComponent(args.filename), file.name);
+      return { collections: [{ firstPage: 0, pageCount: 2 }, { firstPage: 2, pageCount: 1 }] };
+    }
+    if (command === 'spotify_file_page') {
+      if (fail) throw Error('Page unavailable');
+      return JSON.stringify([args.page]);
+    }
+    assert.equal(command, 'end_spotify_file');
+    ends++;
+  } } } };
+  try {
+    const { parseSpotifyFile, spotifyJobRequest } = await import('../web/runtime.js?desktop-import');
+    assert.deepEqual(await parseSpotifyFile(file), { collections: [{ tracks: [0, 1] }, { tracks: [2] }] });
+    assert.deepEqual(Buffer.concat(parts), Buffer.from(content));
+    assert.equal(ends, 1);
+    fail = true;
+    await assert.rejects(parseSpotifyFile(file), /Page unavailable/);
+    assert.equal(ends, 2);
+    assert.deepEqual(await spotifyJobRequest('spotify_job_pause', { jobId: 'saved' }), { operation: 'spotify_job_pause', args: { jobId: 'saved' } });
+  } finally { globalThis.window = originalWindow; }
+});
+
 test('Spotify matching preserves playlist positions, liked membership, and original identifiers', async () => {
   const seed = { title: 'Close Eyes', artist: 'DVRST', album: 'Close Eyes', uri: 'spotify:track:1234567890123456789012' };
   const original = await spotifyPlaceholder(seed);

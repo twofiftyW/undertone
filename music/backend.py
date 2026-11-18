@@ -235,11 +235,13 @@ def dispatch(operation, args):
     if operation == "download":
         import offline
         return offline.download(ident, str(args.get('source') or 'monochrome'))
-    if operation == "spotify_parse":
+    if operation in ('spotify_parse', 'spotify_parse_pages'):
         import spotify_import
         from urllib.parse import unquote
         try:
-            return spotify_import.parse(str(args.get("path") or ""), unquote(str(args.get("filename") or "")))
+            path = Path(str(args.get("path") or ""))
+            result = spotify_import.parse(path, unquote(str(args.get("filename") or "")))
+            return spotify_import.write_pages(result, path.parent) if operation == 'spotify_parse_pages' else result
         except (json.JSONDecodeError, UnicodeError, spotify_import.zipfile.BadZipFile, spotify_import.csv.Error) as error:
             raise ValueError("Couldn’t read this export. Choose a Spotify account-data JSON/ZIP or a playlist CSV file.") from error
     if operation == "spotify_url":

@@ -1,4 +1,4 @@
-// Android owns matching while the screen is off. Only the library's current
+// The native worker owns matching while the UI is closed. Only the library's current
 // owner applies results, so an import cannot overwrite edits made in the UI.
 export function spotifyJobClient({ request, apply, save, update, onError, visible }) {
   let state = { state: 'idle' };
