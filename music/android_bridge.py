@@ -22,13 +22,11 @@ def offline_files():
     directory = ROOT / 'downloads'
     directory.mkdir(exist_ok=True)
     for path in directory.iterdir():
-        if not path.is_file() or not offline.audio_name(path.name) or path.stat().st_size <= 8:
+        entry = offline.completed_audio(path)
+        if not entry:
             continue
-        with path.open('rb') as stream:
-            if not offline.valid_header(stream.read(16), path.suffix):
-                continue
         ident = 'youtube:' + path.stem.removeprefix('youtube-') if path.name.startswith('youtube-') else 'monochrome:' + path.stem
-        result[ident] = {'nativePath': str(path), 'bytes': path.stat().st_size}
+        result[ident] = entry
     return result
 
 
@@ -42,7 +40,8 @@ def dispatch(operation, args):
     if operation == 'list_downloads':
         return offline_files()
     if operation == 'offline_file':
-        return offline_files().get(str(args.get('source') or 'monochrome') + ':' + str(args.get('id') or ''))
+        import offline
+        return offline.find_download(ROOT / 'downloads', str(args.get('id') or ''), str(args.get('source') or 'monochrome'))
     if operation == 'download_track':
         return backend.dispatch('download', args)
     if operation == 'remove_download':

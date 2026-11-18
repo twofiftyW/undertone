@@ -10,6 +10,7 @@ import monochrome
 MAX_AUDIO = 512 * 1024 * 1024
 RESERVE = 40 * 1024 * 1024
 RANGE_SIZE = 512 * 1024
+YOUTUBE_FORMATS = ('m4a', 'mp3', 'ogg', 'opus', 'webm')
 
 
 def audio_name(name):
@@ -28,6 +29,32 @@ def valid_header(data, suffix):
     return data.startswith(b'ID3') or data[:1] == b'\xff'
 
 
+def completed_audio(path):
+    if not audio_name(path.name):
+        return None
+    try:
+        if not path.is_file():
+            return None
+        with path.open('rb') as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size > 8 and valid_header(stream.read(16), path.suffix):
+                return {'nativePath': str(path), 'bytes': size}
+    except OSError:
+        # A download can be removed while its metadata is being read.
+        pass
+    return None
+
+
+def find_download(root, ident, source):
+    if source == 'monochrome' and monochrome.IDENTIFIER.fullmatch(ident):
+        return completed_audio(root / (ident + '.flac'))
+    if source == 'youtube' and re.fullmatch(r'[A-Za-z0-9_-]{11}', ident):
+        for extension in YOUTUBE_FORMATS:
+            if entry := completed_audio(root / f'youtube-{ident}.{extension}'):
+                return entry
+    return None
+
+
 def download(ident, source='monochrome'):
     if source == 'monochrome':
         ident = monochrome.identifier(ident, 'track')
@@ -43,17 +70,13 @@ def download(ident, source='monochrome'):
         raise ValueError('Downloads are available in the installed app.')
     root = Path(directory).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    existing_files = [root / filename] if filename else sorted(root.glob('youtube-' + ident + '.*'))
-    for destination in existing_files:
-        if destination.is_file() and audio_name(destination.name) and destination.stat().st_size > 8:
-            with destination.open('rb') as existing:
-                if valid_header(existing.read(16), destination.suffix):
-                    return {'nativePath': str(destination), 'bytes': destination.stat().st_size}
+    if entry := find_download(root, ident, source):
+        return entry
     if source == 'youtube':
         import backend
         recording = backend.resolve(ident)
         extension = recording.get('format')
-        if extension not in {'m4a', 'webm', 'opus', 'mp3', 'ogg'}:
+        if extension not in YOUTUBE_FORMATS:
             raise ValueError('This YouTube recording has no supported offline audio format.')
         url = recording['url']
         filename = 'youtube-' + ident + '.' + extension

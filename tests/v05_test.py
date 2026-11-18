@@ -76,10 +76,12 @@ with tempfile.TemporaryDirectory() as folder:
         assert len(data['library']['downloads']) == 2
         assert device_sync.pull(phone)['copied'] == 0, 'A repeated sync redownloaded completed files'
         android_bridge.configure(str(phone), str(phone / 'cache'))
-        with patch.object(backend, 'dispatch', side_effect=AssertionError('Offline Android playback tried the network')):
+        with patch.object(backend, 'dispatch', side_effect=AssertionError('Offline Android playback tried the network')), patch.object(Path, 'iterdir', side_effect=AssertionError('Playback scanned every download')):
             assert android_bridge.dispatch('resolve_track', {'track': mono})['offline'] is True
             assert android_bridge.dispatch('resolve_track', {'track': youtube})['offline'] is True
             assert android_bridge.dispatch('resolve_track', {'track': local})['url'].startswith(str(phone))
+            assert android_bridge.dispatch('offline_file', {'id': '111111111111111111'}) is None
+            assert android_bridge.dispatch('offline_file', {'id': '../audio/' + local_record['fileId']}) is None
         link = json.loads((phone / 'pc-link.json').read_text())
         snapshot = device_sync.manifest(pc, link['deviceId'])
         invalid = copy.deepcopy(snapshot); invalid['files'][0]['folder'] = '../outside'
