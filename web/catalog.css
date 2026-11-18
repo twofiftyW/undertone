@@ -272,6 +272,11 @@
 .import-help { color:var(--muted); font-size:12px; line-height:1.8; margin:13px 0; }
 .import-note,.import-status,.download-current { font-size:12px; color:var(--accent-soft); line-height:1.7; margin:15px 0; }
 .spotify-import-tools { display:flex; flex-wrap:wrap; gap:10px; }
+.import-sources .menu-item { padding:12px; border:1px solid var(--line); }
+.import-sources .menu-item + .menu-item { margin-top:5px; }
+.import-sources strong,.import-sources small { display:block; }
+.import-sources strong { font-size:14px; }
+.import-sources small { margin-top:3px; color:var(--muted); font-size:12px; }
 .spotify-job { margin:16px 0; padding:12px 14px; border:1px solid var(--line); border-radius:8px; }
 .spotify-job strong { font-size:14px; }
 .spotify-job .import-status { margin:4px 0; }

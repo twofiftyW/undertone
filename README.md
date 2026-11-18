@@ -34,22 +34,24 @@ Playback checks for a complete local copy before resolving an internet stream, i
 
 Downloads cover Monochrome songs and matched YouTube song fallbacks, including Spotify imports. Imported audio files are already local. YouTube sign-in or regional checks can prevent playback/downloads; these errors are shown and never bypassed. Music-video audio is not included in the offline downloader. Each recording is limited to 512 MB, and downloads reserve some free disk space. Artwork and discovery are still online features. PC-to-phone library copying is available below.
 
-## Import Spotify playlists and Liked Songs
+## Import music
 
-Choose **Import Spotify** in the sidebar or Your library.
+Choose **Import** in Your library. **From a file** opens the device's audio picker. **From Spotify** accepts a playlist link or a Spotify export. In the published 0.0.6-alpha desktop builds the Spotify button is labeled **Import Spotify**.
 
-To append tracks to an existing playlist, open that playlist and choose **Import Spotify**. Select a file or enter a public playlist link, then choose the collections to add. Their tracks are appended in export order, including repeated entries.
+To append tracks to an existing playlist, open that playlist and choose **Import** in its toolbar. Audio files are added in selection order. Spotify collections are added in export order, including repeated entries.
+
+### Spotify playlists and Liked Songs
 
 1. Select a Spotify account-data **ZIP**, its **Playlist / YourLibrary JSON files**, or a playlist **CSV** with song titles and artists. The dialog can open Spotify’s account privacy page to help obtain an export.
 2. Review the collections. Choose **New playlist** or **Liked Songs** for each; YourLibrary files are detected as liked songs automatically.
 3. Choose **Import selected collections**. Existing playlists are preserved. Normal playlists are added as new collections, while liked songs merge into Undertone’s Liked Songs.
 4. Recordings are matched against Monochrome using titles, artists, versions, and available duration/ISRC information, then YouTube if no clear match is found. Unclear matches stay as visible entries with **Choose recording**. Select a candidate to replace that entry throughout its playlists and Liked Songs.
 
-Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. You can close the dialog and listen while matching continues. **Pause matching** stops after the current batch. On Android 0.0.7-alpha, reopen **Import Spotify** and choose **Resume matching** to continue from saved progress after a pause or restart.
+Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. You can close the dialog and listen while matching continues. **Pause matching** stops after the current batch.
 
 Export files are parsed on this device. Only song metadata needed for matching is looked up in the music catalog. ZIP files are read without extracting their contents; unrelated account-data JSON files are skipped. Supported limits are 32 MB per uploaded file, 100 MB of relevant expanded ZIP contents, and 20,000 song entries per import.
 
-On Android, confirming an import starts background matching. You can leave the app or turn off the screen. The import notification shows progress and lets you pause. Open **Import Spotify** to see progress or resume after an interruption.
+On Android, confirming a Spotify import starts background matching. You can leave the app or turn off the screen. Tap the import notification or choose **Import → From Spotify** to see progress and resume after an interruption.
 
 Public Spotify playlist links are a best-effort alternative. Spotify may expose only a preview or no track list at all. The dialog labels preview imports; use an export for a complete playlist. Liked Songs and private collections require an export file. This import flow does not require configuring a Spotify developer app, and it does not copy Spotify’s encrypted audio files.
 

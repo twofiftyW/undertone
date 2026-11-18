@@ -439,12 +439,12 @@ function renderCollection() {
   const title = downloaded ? tr("Downloads") : liked ? tr("Liked songs") : local ? tr("Your music, here.") : collection.name;
   const list = collectionTracks();
   const subtitle = downloaded ? tr("Saved on this device. Playback uses these files before the internet.") : liked ? tr("All the songs that felt like a yes.") : local ? tr("Imported audio saved on this device.") : tr("A little collection, entirely your own.");
-  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar${collection ? ' playlist-toolbar' : ''}"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import">${icon("plus")}${h(tr("Add music"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn" data-action="spotify-import-playlist" data-id="${h(collection.id)}">${icon("import")}${h(tr("Import Spotify"))}</button><button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Choose audio files") : tr("Explore music"))}`;
+  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar${collection ? ' playlist-toolbar' : ''}"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog" data-id="${h(collection.id)}">${icon("import")}${h(tr("Import"))}</button><button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Import") : tr("Explore music"))}`;
 }
 
 function renderLibrary() {
   const cards = sortPlaylists(library.playlists).map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
-  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="spotify-import">${icon("import")}${h(tr("Import Spotify"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
+  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
 }
 
 function renderSidebar() {
@@ -877,6 +877,19 @@ function closeDialog() { dialog.dataset.kind = ""; dialog.close(); }
 function openDialog(content, kind = "") { dialog.dataset.kind = kind; dialog.innerHTML = content; if (!dialog.open) dialog.showModal(); }
 function dialogTop(title) { return `<div class="dialog-top"><h2 id="dialog-title">${h(title)}</h2><button class="icon-btn" data-action="close-dialog" aria-label="${h(tr("Close dialog"))}">${icon("close")}</button></div>`; }
 
+function importSourceDialog(targetPlaylistId) {
+  const target = targetPlaylistId ? ` data-id="${h(targetPlaylistId)}"` : '';
+  openDialog(`${dialogTop(tr("Where would you like to import music from?"))}
+    <div class="dialog-menu import-sources">
+      <button class="menu-item" data-action="import-from-file"${target} aria-labelledby="import-file-label" aria-describedby="import-file-hint"${importing ? ' disabled' : ''}>
+        ${icon('folder')}<span><strong id="import-file-label">${h(tr("From a file"))}</strong><small id="import-file-hint">${h(tr("Audio files on this device"))}</small></span>
+      </button>
+      <button class="menu-item" data-action="import-from-spotify"${target} aria-labelledby="import-spotify-label" aria-describedby="import-spotify-hint">
+        ${icon('music')}<span><strong id="import-spotify-label">${h(tr("From Spotify"))}</strong><small id="import-spotify-hint">${h(tr("Playlist link or Spotify export"))}</small></span>
+      </button>
+    </div>`, 'import-source');
+}
+
 function appearanceDialog() {
   const currentTheme = document.documentElement.dataset.theme;
   const sync = iconSyncEnabled();
@@ -980,46 +993,75 @@ async function metadata(file) {
   });
 }
 
-async function importFiles(files) {
+async function readLocalAudio(file) {
+  if (file.size === 0 || file.size > 256 * 1024 * 1024) throw new Error(tr("File must be between 1 byte and 256 MB"));
+  const bytes = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const id = `local:${hash}`;
+  const previous = library.tracks[id];
+  if (previous && await isDuplicateImport(library.imports.includes(id), previous, file.size, platform === "android" ? native : null) && library.tracks[id]) {
+    return { id };
+  }
+  const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
+  const fileId = previous?.fileId || `${hash}.${extension}`;
+  const duration = previous?.duration || await metadata(file);
+  const nativePath = native ? await native.invoke("save_audio", new Uint8Array(bytes), { headers: { "x-audio-id": fileId } }) : undefined;
+  if (!native) await idbWrite("files", fileId, file);
+  return { id, track: { ...fileMetadata(file.name), genre: "Your files", artwork: "", ...previous, id, fileId, source: "local", duration, nativePath } };
+}
+
+// Retry the library write even when a previously copied file is selected again.
+let audioImportNeedsSave = false;
+
+async function importFiles(files, targetPlaylistId = null) {
   if (importing) return;
+  if (!files.length) return;
   if (!storageReady) { toast(tr("Your library could not be opened. Restart before importing files.")); return; }
   const valid = [...files].filter((file) => /\.(mp3|flac|wav|ogg|m4a|aac|opus|aiff|aif|weba|webm)$/i.test(file.name) || file.type.startsWith("audio/"));
   if (!valid.length) { toast(tr("Choose audio files such as MP3, FLAC, WAV, or M4A.")); return; }
+  const target = () => library.playlists.find(item => item.id === targetPlaylistId);
+  if (targetPlaylistId && !target()) { toast(tr("This playlist is gone.")); return; }
   importing = true;
   let added = 0, duplicates = 0, failed = 0;
   $("#file-input").disabled = true;
   document.querySelectorAll('[data-action="import"]').forEach((button) => button.setAttribute("aria-busy", "true"));
   for (const [index, file] of valid.entries()) {
+    if (targetPlaylistId && !target()) break;
     toast(tr('Importing audio… {done} / {total}', { done: index + 1, total: valid.length }), 0);
     try {
-      if (file.size === 0 || file.size > 256 * 1024 * 1024) throw new Error(tr("File must be between 1 byte and 256 MB"));
-      const bytes = await file.arrayBuffer();
-      const digest = await crypto.subtle.digest("SHA-256", bytes);
-      const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-      const id = `local:${hash}`;
-      const listed = library.imports.includes(id);
-      const previous = library.tracks[id];
-      if (await isDuplicateImport(listed, previous, file.size, platform === "android" ? native : null)) {
-        duplicates++;
-        continue;
+      const { id, track } = await readLocalAudio(file);
+      if (track) {
+        remember(track);
+        if (!library.imports.includes(id)) library.imports.unshift(id);
+        audioImportNeedsSave = true;
       }
-      const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
-      const fileId = previous?.fileId || `${hash}.${extension}`;
-      const duration = previous?.duration || await metadata(file);
-      const nativePath = native ? await native.invoke("save_audio", new Uint8Array(bytes), { headers: { "x-audio-id": fileId } }) : undefined;
-      if (!native) await idbWrite("files", fileId, file);
-      const track = { ...fileMetadata(file.name), genre: "Your files", artwork: "", ...previous, id, fileId, source: "local", duration, nativePath };
-      remember(track);
-      if (!listed) library.imports.unshift(id);
-      await saveLibrary();
-      added++;
+      const playlist = targetPlaylistId && target();
+      const appended = playlist && !playlist.trackIds.includes(id);
+      if (appended) {
+        playlist.trackIds.push(id);
+        audioImportNeedsSave = true;
+      }
+      if (audioImportNeedsSave) {
+        await saveLibrary();
+        audioImportNeedsSave = false;
+      }
+      if (targetPlaylistId && !playlist) break;
+      if (targetPlaylistId ? appended : track) added++;
+      else duplicates++;
     } catch (error) { console.error(error); failed++; }
   }
   importing = false;
   $("#file-input").disabled = false;
+  const fileChoice = dialog.querySelector('[data-action="import-from-file"]');
+  if (fileChoice) fileChoice.disabled = false;
   $("#file-input").value = "";
-  navigate("local");
-  const summary = [tr('Imported {count}.', { count: countLabel(added) }), duplicates ? tr('Already in your library: {count}', { count: duplicates }) : "", failed ? tr('Could not import: {count}', { count: failed }) : ""].filter(Boolean).join(" · ");
+  if (targetPlaylistId) render();
+  else navigate("local");
+  const playlist = targetPlaylistId && target();
+  const imported = playlist ? tr('Added to “{playlist}”: {count}', { playlist: playlist.name, count: countLabel(added) })
+    : targetPlaylistId ? tr('This playlist is gone.') : tr('Imported {count}.', { count: countLabel(added) });
+  const summary = [imported, duplicates ? tr(playlist ? 'Already in this playlist: {count}' : 'Already in your library: {count}', { count: duplicates }) : "", failed ? tr('Could not import: {count}', { count: failed }) : ""].filter(Boolean).join(" · ");
   toast(summary, failed ? 8500 : 5000);
   document.querySelectorAll('[data-action="import"]').forEach((button) => button.removeAttribute("aria-busy"));
 }
@@ -1574,8 +1616,13 @@ const actions = {
   "open-downloads": () => { closeDialog(); navigate("downloads"); },
   "remove-download": async button => { const track = getTrack(button.dataset.id || pendingTrack); if (!track) return; await native.invoke("remove_download", { id: track.remoteId, source: track.source }); delete library.downloads[track.id]; await saveLibrary(); closeDialog(); render(); toast(tr("Downloaded copy removed. The song stays in your library.")); },
   "audio-output": () => showAudioOutput(),
-  "spotify-import": () => openSpotifyImport(),
-  "spotify-import-playlist": button => openSpotifyImport(button.dataset.id),
+  "import-from-spotify": button => openSpotifyImport(button.dataset.id || null),
+  "import-from-file": button => {
+    const input = $("#file-input");
+    input.dataset.playlistId = button.dataset.id || '';
+    input.value = "";
+    input.click();
+  },
   "spotify-files": () => $("#spotify-file-input").click(),
   "spotify-help": () => native.invoke("spotify_help"),
   "spotify-start": () => startSpotifyImport(),
@@ -1590,7 +1637,7 @@ const actions = {
   "release-queue": async button => enqueueTracks((await ensureAlbum(button.dataset.id)).tracks),
   "autoplay": () => { autoplay = !autoplay; renderQueue(); },
   discover: () => navigate("discover"),
-  import: () => $("#file-input").click(),
+  import: button => importSourceDialog(button.dataset.id),
   about,
   retry: () => loadCatalog(true),
   refresh: () => loadCatalog(true),
@@ -1708,7 +1755,17 @@ $("#search").addEventListener("input", () => {
 });
 $("#search-form").addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(searchTimer); if (query) loadCatalog(); });
 $("#clear-search").addEventListener("click", () => { clearTimeout(searchTimer); ++requestId; query = ""; $("#search").value = ""; render(); $("#search").focus(); });
-$("#file-input").addEventListener("change", (event) => importFiles(event.target.files));
+$("#file-input").addEventListener("change", event => {
+  const input = event.target;
+  const files = [...input.files];
+  const targetPlaylistId = input.dataset.playlistId || null;
+  delete input.dataset.playlistId;
+  input.value = "";
+  if (!files.length) return;
+  if (dialog.open && dialog.dataset.kind === 'import-source') closeDialog();
+  importFiles(files, targetPlaylistId);
+});
+$("#file-input").addEventListener("cancel", event => { delete event.target.dataset.playlistId; });
 $("#spotify-file-input").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (files.length) readSpotifyFiles(files); });
 document.addEventListener("change", (event) => {
   let iconChange;
