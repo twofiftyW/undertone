@@ -272,10 +272,22 @@
 .import-help { color:var(--muted); font-size:12px; line-height:1.8; margin:13px 0; }
 .import-note,.import-status,.download-current { font-size:12px; color:var(--accent-soft); line-height:1.7; margin:15px 0; }
 .spotify-import-tools { display:flex; flex-wrap:wrap; gap:10px; }
+#desktop-import-progress { margin:0 clamp(21px, 3vw, 38px) 10px; }
+#desktop-import-progress[hidden] { display:none; }
+.import-sources .menu-item { padding:12px; border:1px solid var(--line); }
+.import-sources .menu-item + .menu-item { margin-top:5px; }
+.import-sources strong,.import-sources small { display:block; }
+.import-sources strong { font-size:14px; }
+.import-sources small { margin-top:3px; color:var(--muted); font-size:12px; }
+.spotify-job { margin:16px 0; padding:12px 14px; border:1px solid var(--line); border-radius:8px; }
+.spotify-job strong { font-size:14px; }
+.spotify-job .import-status { margin:4px 0; }
+.spotify-job .import-progress { display:block; margin:6px 0 10px; }
 .spotify-link { margin-top:20px; color:var(--muted); font-size:12px; }
 .spotify-link summary { cursor:pointer; }
 #spotify-link-form { display:flex; gap:8px; margin-top:13px; }
 #spotify-url { min-width:0; flex:1; border:1px solid #ffffff25; padding:10px; border-radius:6px; color:var(--text); background:var(--surface-inset); font:inherit; }
+.playlist-toolbar { flex-wrap:wrap; }
 .spotify-collections { max-height:245px; overflow:auto; margin-top:20px; }
 .spotify-collection { display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); font-size:12px; }
 .spotify-collection>input { accent-color:var(--accent); }

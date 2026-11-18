@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.6-alpha** runs on Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.7-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone Alpha from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Undertone Alpha 0.0.6 updates 0.0.5-alpha in place using the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **Android:** Install Undertone Alpha 0.0.7-alpha over 0.0.6-alpha to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
 
 Large collections keep their full scroll range on all three platforms. The app renders the visible tracks and nearby rows as you scroll.
 
@@ -34,18 +34,26 @@ Playback checks for a complete local copy before resolving an internet stream, i
 
 Downloads cover Monochrome songs and matched YouTube song fallbacks, including Spotify imports. Imported audio files are already local. YouTube sign-in or regional checks can prevent playback/downloads; these errors are shown and never bypassed. Music-video audio is not included in the offline downloader. Each recording is limited to 512 MB, and downloads reserve some free disk space. Artwork and discovery are still online features. PC-to-phone library copying is available below.
 
-## Import Spotify playlists and Liked Songs
+## Import music
 
-Choose **Import Spotify** in the sidebar or Your library.
+Choose **Import** in Your library. **From a file** opens the device's audio picker. **From Spotify** accepts a public playlist link or a Spotify export.
+
+To append tracks to an existing playlist, open that playlist and choose **Import** in its toolbar. Audio files are added in selection order. Spotify collections are added in export order, including repeated entries.
+
+### Spotify playlists and Liked Songs
 
 1. Select a Spotify account-data **ZIP**, its **Playlist / YourLibrary JSON files**, or a playlist **CSV** with song titles and artists. The dialog can open Spotify’s account privacy page to help obtain an export.
 2. Review the collections. Choose **New playlist** or **Liked Songs** for each; YourLibrary files are detected as liked songs automatically.
 3. Choose **Import selected collections**. Existing playlists are preserved. Normal playlists are added as new collections, while liked songs merge into Undertone’s Liked Songs.
 4. Recordings are matched against Monochrome using titles, artists, versions, and available duration/ISRC information, then YouTube if no clear match is found. Unclear matches stay as visible entries with **Choose recording**. Select a candidate to replace that entry throughout its playlists and Liked Songs.
 
-Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. **Pause matching** stops after the current batch; **Match remaining songs** resumes work. You can close the dialog and listen while matching continues.
+Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. You can close the dialog and listen while matching continues. **Pause matching** stops after the current batch.
 
 Export files are parsed on this device. Only song metadata needed for matching is looked up in the music catalog. ZIP files are read without extracting their contents; unrelated account-data JSON files are skipped. Supported limits are 32 MB per uploaded file, 100 MB of relevant expanded ZIP contents, and 20,000 song entries per import.
+
+On Android, confirming a Spotify import starts background matching. You can leave the app or turn off the screen. Tap the import notification or choose **Import → From Spotify** to see progress and resume after an interruption.
+
+On Windows and Linux, Spotify matching continues after you minimize or close the window. Reopen Undertone to apply the saved results. The progress button below the search bar opens the import controls, where you can pause or resume. Desktop notifications report completion or a connection interruption when your system allows them.
 
 Public Spotify playlist links are a best-effort alternative. Spotify may expose only a preview or no track list at all. The dialog labels preview imports; use an export for a complete playlist. Liked Songs and private collections require an export file. This import flow does not require configuring a Spotify developer app, and it does not copy Spotify’s encrypted audio files.
 
@@ -111,6 +119,6 @@ To build the Android release, run `python3 scripts/android_setup.py` once. Set `
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.6-alpha-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.7-alpha-windows-x64.zip`.
 
 The expected Android signing certificate SHA-256 is `ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb`. The build helper also reads the original keystore from `.private/android-signing.p12` and the password from `.private/android-signing-password`. Git ignores the `.private` directory. Restrict access to it to the Windows account or Unix user that signs the release. User libraries and downloaded music are stored separately from the app.

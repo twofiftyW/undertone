@@ -5,12 +5,14 @@ from pathlib import Path
 import re
 
 ROOT = None
+IMPORTS = None
 OPERATIONS = {'search', 'fallback', 'videos', 'artist', 'discography', 'album', 'recommendations', 'resolve', 'home', 'match', 'spotify_url'}
 
 
 def configure(files, cache):
-    global ROOT
+    global ROOT, IMPORTS
     ROOT = Path(files).resolve()
+    IMPORTS = Path(cache) / 'spotify-imports'
     os.environ['UNDERTONE_CACHE_DIR'] = str(Path(cache) / 'music')
     os.environ['UNDERTONE_DOWNLOAD_DIR'] = str(ROOT / 'downloads')
     return True
@@ -33,6 +35,9 @@ def offline_files():
 def dispatch(operation, args):
     import backend
     import device_sync
+    if operation.startswith('spotify_job_'):
+        import spotify_job
+        return spotify_job.dispatch(ROOT, operation, args)
     if operation == 'music':
         if args.get('operation') not in OPERATIONS:
             raise ValueError('Unknown music request')
@@ -66,9 +71,13 @@ def dispatch(operation, args):
             return {'url': saved['nativePath'], 'offline': True}
         return backend.dispatch('resolve', {'id': track.get('remoteId'), 'source': track.get('source'), 'track': track})
     if operation == 'parse_spotify':
-        path = ROOT / 'spotify-import.tmp'
+        token = args.get('token', '')
+        if not re.fullmatch(r'[a-f0-9]{32}', token):
+            raise ValueError('Invalid Spotify import session')
+        directory = IMPORTS / token
+        path = directory / 'export'
         try:
-            return backend.dispatch('spotify_parse', {'path': str(path), 'filename': args.get('filename')})
+            return backend.dispatch('spotify_parse_pages', {'path': str(path), 'filename': args.get('filename')})
         finally:
             path.unlink(missing_ok=True)
     if operation == 'link_discover':

@@ -2,11 +2,19 @@
 from __future__ import annotations
 import random
 import re
+import threading
 from datetime import date
 import requests
 
 BASE = 'https://tracks.monochrome.st'
 IDENTIFIER = re.compile(r'\d{17,20}\Z')
+_match_worker = threading.local()
+
+
+def initialize_match_worker():
+    # Each import worker owns its connection pool; other catalog callers keep
+    # their ordinary one-off requests.
+    _match_worker.session = requests.Session()
 
 
 def identifier(value, kind):
@@ -18,7 +26,11 @@ def identifier(value, kind):
 
 def request(path, **params):
     try:
-        response = requests.get(BASE + path, params=params, timeout=(6, 22))
+        client = getattr(_match_worker, 'session', requests)
+        if client is not requests:
+            # Reuse the transport without carrying cookies between catalog queries.
+            client.cookies.clear()
+        response = client.get(BASE + path, params=params, timeout=(6, 22))
         if response.status_code in {401, 403}:
             raise ValueError('Monochrome is restricting this request. Please try again later.')
         if response.status_code == 429:

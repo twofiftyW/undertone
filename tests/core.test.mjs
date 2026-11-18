@@ -403,7 +403,7 @@ test('a failed native load reports an error and can be retried', async () => {
   } finally { player.dispose(); }
 });
 
-import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack } from '../web/library.js';
+import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, replaceLibraryTracks, prepareSpotifyCollections, appendSpotifyPreview, appendSpotifyToPlaylist } from '../web/library.js';
 
 test('switching Linux tracks stops the old sound and ignores its delayed native errors', async () => {
   let state = { token: 0, paused: true, ready: false };
@@ -586,6 +586,35 @@ test('app icons follow the theme by default and restore a separate manual choice
   assert.equal(nativeIcon, 'blue');
 });
 
+test('background Spotify results are acknowledged only after the library is saved, and replay after an interrupted save', async () => {
+  const { spotifyJobClient } = await import('../web/spotify-job.js');
+  const outstanding = Array.from({ length: 77 }, (_, index) => ({ seq: index + 1, id: 's' + index }));
+  let fail = true, visible = true;
+  const writes = [], acknowledgements = [];
+  const client = spotifyJobClient({
+    visible: () => visible,
+    update() {},
+    onError() { visible = false; },
+    apply(items) { writes.push(items.map(item => item.seq)); },
+    save: async () => { if (fail) throw Error('Disk full'); },
+    request: async (operation, args) => {
+      if (operation === 'spotify_job_status') return { jobId: 'a', state: 'done', pending: outstanding.length };
+      if (operation === 'spotify_job_results') return { jobId: 'a', items: outstanding.filter(item => item.seq > args.after).slice(0, args.limit) };
+      assert.equal(operation, 'spotify_job_ack');
+      acknowledgements.push(args.through);
+      outstanding.splice(0, args.through);
+    }
+  });
+  await client.refresh();
+  assert.deepEqual(acknowledgements, []);
+  fail = false;
+  visible = true;
+  await client.refresh();
+  assert.deepEqual(acknowledgements, [77]);
+  assert.deepEqual(writes[0], writes[1]);
+  assert.equal(writes[1].length, 77);
+});
+
 test('Android requests return asynchronously, carry provider arguments, and expose engine errors', async () => {
   const originalWindow = globalThis.window;
   globalThis.window = { UndertoneDevice: { request(id, operation, args) {
@@ -606,6 +635,92 @@ test('Android requests return asynchronously, carry provider arguments, and expo
   } finally { globalThis.window = originalWindow; }
 });
 
+test('Android streams export bytes and restores paged tracks without a single oversized bridge reply', async () => {
+  const originalWindow = globalThis.window;
+  const input = Buffer.alloc(700001, 0xa3);
+  const chunks = [];
+  const file = new Blob([input]);
+  file.name = 'Мне нравится.csv';
+  file.arrayBuffer = () => { throw new Error('Full export was read at once'); };
+  const ok = data => JSON.stringify({ data });
+  let cleaned = 0, fail = false;
+  globalThis.window = { UndertoneDevice: {
+    beginImport: () => ok('job'),
+    appendImport(token, part) {
+      assert.equal(token, 'job');
+      const chunk = Buffer.from(part, 'base64');
+      assert.ok(chunk.length <= 32768);
+      chunks.push(chunk);
+      return ok(true);
+    },
+    request(id, operation, payload) {
+      assert.equal(operation, 'parse_spotify');
+      assert.equal(decodeURIComponent(JSON.parse(payload).filename), file.name);
+      queueMicrotask(() => window.__undertoneReply(id, { data: {
+        collections: [{ name: 'a', firstPage: 0, pageCount: 1 }, { name: 'b', firstPage: 1, pageCount: 2 }]
+      } }));
+    },
+    importPage(token, page) {
+      assert.equal(token, 'job');
+      if (fail) throw new Error('Page unavailable');
+      return JSON.stringify([page * 2, page * 2 + 1]);
+    },
+    endImport(token) { assert.equal(token, 'job'); cleaned++; return ok(true); }
+  } };
+  try {
+    const { parseSpotifyFile } = await import('../web/runtime.js?android-export-pages');
+    assert.deepEqual((await parseSpotifyFile(file)).collections, [
+      { name: 'a', tracks: [0, 1] }, { name: 'b', tracks: [2, 3, 4, 5] }
+    ]);
+    assert.deepEqual(Buffer.concat(chunks), input);
+    assert.equal(cleaned, 1);
+    fail = true;
+    await assert.rejects(parseSpotifyFile(file), /Page unavailable/);
+    assert.equal(cleaned, 2);
+  } finally { globalThis.window = originalWindow; }
+});
+
+test('desktop imports use bounded binary writes, read each collection in order and clean up failed jobs', async () => {
+  const originalWindow = globalThis.window;
+  const content = new Uint8Array(600003).fill(41);
+  const file = new Blob([content]);
+  file.name = 'Тест 100%.csv';
+  file.arrayBuffer = () => { throw Error('Read entire file'); };
+  const parts = [];
+  let ends = 0, fail = false;
+  globalThis.window = { __TAURI__: { core: { async invoke(command, args, options) {
+    if (command === 'begin_spotify_file') return 'session';
+    if (command === 'spotify_job') return args;
+    if (command === 'append_spotify_file') {
+      assert.equal(options.headers['x-import-job'], 'session');
+      assert.ok(args.byteLength <= 262144);
+      parts.push(args);
+      return;
+    }
+    assert.equal(args.token, 'session');
+    if (command === 'finish_spotify_file') {
+      assert.equal(decodeURIComponent(args.filename), file.name);
+      return { collections: [{ firstPage: 0, pageCount: 2 }, { firstPage: 2, pageCount: 1 }] };
+    }
+    if (command === 'spotify_file_page') {
+      if (fail) throw Error('Page unavailable');
+      return JSON.stringify([args.page]);
+    }
+    assert.equal(command, 'end_spotify_file');
+    ends++;
+  } } } };
+  try {
+    const { parseSpotifyFile, spotifyJobRequest } = await import('../web/runtime.js?desktop-import');
+    assert.deepEqual(await parseSpotifyFile(file), { collections: [{ tracks: [0, 1] }, { tracks: [2] }] });
+    assert.deepEqual(Buffer.concat(parts), Buffer.from(content));
+    assert.equal(ends, 1);
+    fail = true;
+    await assert.rejects(parseSpotifyFile(file), /Page unavailable/);
+    assert.equal(ends, 2);
+    assert.deepEqual(await spotifyJobRequest('spotify_job_pause', { jobId: 'saved' }), { operation: 'spotify_job_pause', args: { jobId: 'saved' } });
+  } finally { globalThis.window = originalWindow; }
+});
+
 test('Spotify matching preserves playlist positions, liked membership, and original identifiers', async () => {
   const seed = { title: 'Close Eyes', artist: 'DVRST', album: 'Close Eyes', uri: 'spotify:track:1234567890123456789012' };
   const original = await spotifyPlaceholder(seed);
@@ -616,4 +731,102 @@ test('Spotify matching preserves playlist positions, liked membership, and origi
   assert.deepEqual(library.liked, [track.id]);
   assert.deepEqual(track.spotifyUris, [seed.uri]);
   assert.equal(library.tracks[original.id], undefined);
+});
+
+test('Spotify preview enforces the 20,000-song total across multiple files and links', () => {
+  const state = { collections: [] };
+  appendSpotifyPreview(state, [{ tracks: Array(12000) }]);
+  appendSpotifyPreview(state, [{ tracks: Array(7999) }, { tracks: Array(1) }]);
+  assert.throws(() => appendSpotifyPreview(state, [{ tracks: Array(1) }]), /20,000/);
+  assert.equal(state.collections.length, 3);
+  assert.equal(state.previewCount, 20000);
+});
+
+test('a large repeat Spotify export resumes the original playlist while preserving distinct selections', async () => {
+  const records = Array.from({ length: 2400 }, (_, index) => ({
+    title: `Track ${index}`, artist: 'Artist', album: 'Album', uri: `spotify:track:${index}`
+  }));
+  const oldFormat = { title: 'Older format', artist: 'Artist', album: 'Album' };
+  const all = [records[0], ...records, oldFormat];
+  const selected = [{ name: 'Road', kind: 'playlist', tracks: all }, { name: 'Likes', kind: 'liked', tracks: [records[0], records[0], oldFormat] }];
+  const library = { tracks: {}, playlists: [], liked: [], recent: [] };
+  const prepared = await prepareSpotifyCollections(library, selected);
+  assert.equal(prepared.placeholders.size, 2401);
+  assert.equal(Object.keys(library.tracks).length, 0);
+  library.tracks = Object.fromEntries(prepared.placeholders);
+  library.liked = [...prepared.liked];
+  library.playlists = prepared.playlists;
+  const playlist = library.playlists[0];
+  const legacyId = (await spotifyPlaceholder(oldFormat)).id;
+  assert.deepEqual(playlist.trackIds, [...all.slice(0, -1).map(record => record.uri), legacyId]);
+  const recording = { id: 'monochrome:1', source: 'monochrome', title: 'First' };
+  replaceLibraryTracks(library, [[records[0].uri, recording], [legacyId, recording]]);
+  assert.deepEqual(library.liked, [recording.id]);
+  assert.deepEqual(playlist.trackIds.slice(0, 2), [recording.id, recording.id]);
+  assert.equal(playlist.trackIds.at(-1), recording.id);
+  const retry = await prepareSpotifyCollections(library, selected);
+  assert.equal(retry.playlists.length, 0);
+  assert.equal(retry.placeholders.size, 0);
+  assert.deepEqual([...retry.liked], [recording.id]);
+  assert.equal(retry.reused.get(playlist.id), playlist.spotifyImportKey);
+  // Upgrade an unedited playlist saved by 0.0.6, which had no fingerprint.
+  delete playlist.spotifyImportKey;
+  const legacy = await prepareSpotifyCollections(library, [selected[0], selected[0]]);
+  assert.ok(legacy.reused.has(playlist.id));
+  assert.equal(legacy.playlists.length, 1);
+  playlist.spotifyImportKey = legacy.reused.get(playlist.id);
+  const distinct = await prepareSpotifyCollections(library, [
+    { ...selected[0], tracks: all.slice(1) },
+    { ...selected[0], sourceUrl: 'https://open.spotify.com/playlist/another-id' }
+  ]);
+  assert.equal(distinct.playlists.length, 2);
+});
+
+test('a batch of provider results respects intervening manual choices and merges aliases once', async () => {
+  const originals = await Promise.all(['a', 'b', 'c'].map(uri => spotifyPlaceholder({ uri, title: uri, artist: 'A' })));
+  const otherPlaylist = { trackIds: ['x', 'y'] };
+  const unchanged = otherPlaylist.trackIds;
+  const library = { tracks: Object.fromEntries(originals.map(track => [track.id, track])), liked: ['a', 'x', 'b', 'c'], recent: ['c', 'b', 'a'], playlists: [{ trackIds: ['c', 'a', 'b', 'a'] }, otherPlaylist] };
+  const manual = { id: 'monochrome:manual', source: 'monochrome' };
+  const automatic = { id: 'monochrome:auto', source: 'monochrome', spotifyUris: ['prior'] };
+  replaceLibraryTrack(library, 'c', manual);
+  const applied = replaceLibraryTracks(library, originals.map(track => [track.id, automatic]));
+  assert.deepEqual([...applied.keys()], ['a', 'b']);
+  assert.deepEqual(library.tracks[automatic.id].spotifyUris, ['prior', 'a', 'b']);
+  assert.deepEqual(library.liked, [automatic.id, 'x', manual.id]);
+  assert.deepEqual(library.recent, [manual.id, automatic.id]);
+  assert.deepEqual(library.playlists[0].trackIds, [manual.id, automatic.id, automatic.id, automatic.id]);
+  assert.equal(otherPlaylist.trackIds, unchanged);
+});
+
+test('import into an existing playlist appends in source order and can be retried after matching', async () => {
+  const a = { title: 'A', artist: 'One', uri: 'spotify:track:a' };
+  const b = { title: 'B', artist: 'Two' };
+  const source = [
+    { name: 'Export', kind: 'playlist', tracks: [a, b, a] },
+    { name: 'Saved', kind: 'liked', tracks: [b, a] }
+  ];
+  const target = { id: 'one', name: 'My playlist', trackIds: ['original'] };
+  const other = { id: 'two', name: 'Another', trackIds: ['keep'] };
+  const library = { tracks: {}, playlists: [target, other], liked: ['keep-liked'], recent: [] };
+  const prepared = await prepareSpotifyCollections(library, source, target.id);
+  assert.equal(prepared.playlists.length, 0);
+  assert.equal(prepared.liked.size, 0);
+  target.trackIds.push('added-during-preview');
+  appendSpotifyToPlaylist(target, prepared.additions);
+  library.tracks = Object.fromEntries(prepared.placeholders);
+  const bId = (await spotifyPlaceholder(b)).id;
+  assert.deepEqual(target.trackIds, ['original', 'added-during-preview', a.uri, bId, a.uri, bId, a.uri]);
+  assert.deepEqual(library.liked, ['keep-liked']);
+  assert.deepEqual(other.trackIds, ['keep']);
+  replaceLibraryTracks(library, [[a.uri, { id: 'matched-a', source: 'monochrome' }], [bId, { id: 'matched-b', source: 'youtube' }]]);
+  const retry = await prepareSpotifyCollections(library, source, target.id);
+  assert.equal(retry.placeholders.size, 0);
+  const beforeRetry = target.trackIds;
+  appendSpotifyToPlaylist(target, retry.additions);
+  assert.equal(target.trackIds, beforeRetry);
+  assert.deepEqual(target.trackIds.slice(2), ['matched-a', 'matched-b', 'matched-a', 'matched-b', 'matched-a']);
+  appendSpotifyToPlaylist(other, retry.additions);
+  assert.deepEqual(other.trackIds.slice(1), target.trackIds.slice(2));
+  assert.throws(() => appendSpotifyToPlaylist(undefined, retry.additions), /playlist is gone/);
 });

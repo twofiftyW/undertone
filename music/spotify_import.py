@@ -21,7 +21,10 @@ def recording(raw):
     if not isinstance(raw, dict):
         return None
     meta = raw.get('track') if isinstance(raw.get('track'), dict) else raw.get('localTrack') if isinstance(raw.get('localTrack'), dict) else raw
-    fields = {key(k): v for k, v in meta.items()}
+    return recording_fields({key(k): v for k, v in meta.items()})
+
+
+def recording_fields(fields):
     title = fields.get('trackname') or fields.get('title') or fields.get('name') or (fields.get('track') if isinstance(fields.get('track'), str) else '')
     credits = fields.get('artists') or fields.get('artistnames') or fields.get('artistname') or fields.get('artist') or fields.get('subtitle') or ''
     if isinstance(credits, list):
@@ -50,79 +53,107 @@ def recording(raw):
     return {'title': title.strip()[:500], 'artist': str(credits).strip()[:500], 'album': str(album).strip()[:500], 'uri': uri, 'duration': max(0, round(duration)), 'isrc': isrc[:30]}
 
 
-def collection(name, rows, kind='playlist', **extras):
+def collection(name, rows, kind='playlist', *, remaining=MAX_TRACKS, **extras):
     if isinstance(rows, dict):
         rows = rows.get('items') or rows.get('tracks') or []
-    if not isinstance(rows, list):
+    parse_row = recording
+    if isinstance(rows, csv.DictReader):
+        rows.fieldnames = [key(name) for name in rows.fieldnames or []]
+        parse_row = recording_fields
+    elif not isinstance(rows, list):
         return None
-    tracks = [song for row in rows if (song := recording(row))]
+    tracks = []
+    ignored = 0
+    for row in rows:
+        song = parse_row(row)
+        if song is None:
+            ignored += 1
+            continue
+        if len(tracks) >= remaining:
+            raise ValueError('Import up to 20,000 songs at a time. Split this export into smaller files.')
+        tracks.append(song)
     if not tracks:
         return None
-    return {'name': str(name or 'Spotify playlist')[:160], 'kind': kind, 'tracks': tracks, 'ignored': len(rows) - len(tracks), **extras}
+    return {'name': str(name or 'Spotify playlist')[:160], 'kind': kind, 'tracks': tracks, 'ignored': ignored, **extras}
 
 
-def decode(data):
-    if data.startswith((b'\xff\xfe', b'\xfe\xff')):
-        return data.decode('utf-16')
-    return data.decode('utf-8-sig')
-
-
-def parse_file(data, filename):
-    if len(data) > MAX_FILE:
-        raise ValueError('This export file is too large. Import its playlist files separately.')
+def parse_file(stream, filename, remaining):
     label = Path(filename).stem
     inferred_kind = 'liked' if any(word in key(label) for word in ['liked', 'yourlibrary', 'savedsongs', 'savedtracks']) else 'playlist'
-    text = decode(data)
-    if Path(filename).suffix.lower() == '.csv':
-        try:
-            dialect = csv.Sniffer().sniff(text[:8192], delimiters=',;\t')
-        except csv.Error:
-            dialect = csv.excel
-        result = collection(label, list(csv.DictReader(io.StringIO(text), dialect=dialect)), inferred_kind)
-        return [result] if result else []
-    raw = json.loads(text)
+    encoding = 'utf-16' if stream.read(2) in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig'
+    stream.seek(0)
+    with io.TextIOWrapper(stream, encoding=encoding, newline='') as text:
+        if Path(filename).suffix.lower() == '.csv':
+            try:
+                dialect = csv.Sniffer().sniff(text.read(8192), delimiters=',;\t')
+            except csv.Error:
+                dialect = csv.excel
+            text.seek(0)
+            entry = collection(label, csv.DictReader(text, dialect=dialect), inferred_kind, remaining=remaining)
+            return [entry] if entry else []
+        raw = json.load(text)
     result = []
     if isinstance(raw, dict) and isinstance(raw.get('playlists'), list):
         for playlist in raw['playlists']:
             if isinstance(playlist, dict):
-                entry = collection(playlist.get('name'), playlist.get('items') or playlist.get('tracks') or [])
+                entry = collection(playlist.get('name'), playlist.get('items') or playlist.get('tracks') or [], remaining=remaining)
                 if entry:
                     result.append(entry)
+                    remaining -= len(entry['tracks'])
     elif isinstance(raw, dict):
         kind = 'liked' if inferred_kind == 'liked' or (not raw.get('name') and ('albums' in raw or 'artists' in raw)) else 'playlist'
-        entry = collection('Liked Songs' if kind == 'liked' else raw.get('name') or label, raw.get('tracks') or raw.get('items') or [], kind)
+        entry = collection('Liked Songs' if kind == 'liked' else raw.get('name') or label, raw.get('tracks') or raw.get('items') or [], kind, remaining=remaining)
         if entry:
             result.append(entry)
     elif isinstance(raw, list):
-        entry = collection('Liked Songs' if inferred_kind == 'liked' else label, raw, inferred_kind)
+        entry = collection('Liked Songs' if inferred_kind == 'liked' else label, raw, inferred_kind, remaining=remaining)
         if entry:
             result.append(entry)
     return result
 
 
 def parse(path, filename):
-    data = Path(path).read_bytes()
-    if len(data) > MAX_FILE:
+    path = Path(path)
+    if path.stat().st_size > MAX_FILE:
         raise ValueError('Choose an export smaller than 32 MB, or import its playlist files separately.')
     collections = []
     if Path(filename).suffix.lower() == '.zip':
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        remaining = MAX_TRACKS
+        with zipfile.ZipFile(path) as archive:
             relevant = [item for item in archive.infolist() if not item.is_dir() and (Path(item.filename).suffix.lower() == '.csv' or (Path(item.filename).suffix.lower() == '.json' and any(word in key(Path(item.filename).stem) for word in ['playlist', 'yourlibrary', 'savedtracks', 'likedsongs'])))]
             if sum(item.file_size for item in relevant) > MAX_EXPANDED or len(relevant) > 300:
                 raise ValueError('This export expands to too much data. Select its individual playlist files instead.')
             for item in relevant:
                 if item.flag_bits & 1:
                     raise ValueError('Encrypted ZIP files are unsupported. Unzip the playlist files before importing.')
-                collections.extend(parse_file(archive.read(item), Path(item.filename).name))
+                if item.file_size > MAX_FILE:
+                    raise ValueError('This export file is too large. Import its playlist files separately.')
+                with archive.open(item) as stream:
+                    entries = parse_file(stream, Path(item.filename).name, remaining)
+                collections.extend(entries)
+                remaining -= sum(len(c['tracks']) for c in entries)
     elif Path(filename).suffix.lower() in {'.json', '.csv'}:
-        collections = parse_file(data, filename)
+        with path.open('rb') as stream:
+            collections = parse_file(stream, filename, MAX_TRACKS)
     else:
         raise ValueError('Choose Spotify JSON files, a CSV playlist export, or a ZIP containing them.')
-    if sum(len(c['tracks']) for c in collections) > MAX_TRACKS:
-        raise ValueError('Import up to 20,000 songs at a time. Split this export into smaller files.')
     if not collections:
         raise ValueError('No playlist or liked-song records were found. Choose Playlist, YourLibrary, or a song CSV export.')
     return {'collections': collections, 'total': sum(len(c['tracks']) for c in collections)}
+
+
+def write_pages(result, directory):
+    # Return collection metadata through the bridge and read bounded track pages on demand.
+    page = 0
+    for entry in result['collections']:
+        records = entry.pop('tracks')
+        entry['firstPage'] = page
+        for start in range(0, len(records), 32):
+            with (directory / f'{page}.json').open('w', encoding='utf-8') as stream:
+                json.dump(records[start:start + 32], stream, ensure_ascii=False, separators=(',', ':'))
+            page += 1
+        entry['pageCount'] = page - entry['firstPage']
+    return result
 
 
 def from_url(value):

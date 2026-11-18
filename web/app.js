@@ -1,9 +1,10 @@
 import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
 import { isFileDrag, searchTracks } from "./core.js";
-import { nativeRuntime as native, musicRequest } from "./runtime.js";
+import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequest } from "./runtime.js";
+import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
-import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
+import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyCollections, appendSpotifyToPlaylist, replaceLibraryTracks, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
 import { TrackWindows } from './track-window.js';
@@ -17,7 +18,8 @@ await restoreAppIcon();
 const platform = native ? await native.invoke('platform') : 'browser';
 const trackWindows = native ? new TrackWindows() : null;
 const linuxPlayback = platform === 'linux';
-const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
+const desktop = linuxPlayback || platform === 'windows';
+const deviceStorage = desktop || !!nativeAudio;
 const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
 const view = $("#view");
 const dialog = $("#dialog");
@@ -80,6 +82,15 @@ let downloadsDone = 0;
 let downloadsTotal = 0;
 let downloadErrors = [];
 let spotifyState = null;
+const resolvedSpotifyTracks = new Map();
+const spotifyJob = deviceStorage ? spotifyJobClient({
+  request: spotifyJobRequest,
+  save: saveLibrary,
+  apply: applySpotifyJobResults,
+  update: updateSpotifyJobPanel,
+  onError: error => toast(tr(String(error.message || error)), 6500),
+  visible: () => storageReady && !document.hidden
+}) : null;
 
 function pageId() { return page.slice(page.indexOf(":") + 1); }
 function currentArtist() { return artists.get(pageId()); }
@@ -172,7 +183,7 @@ function saveLibrary() {
   }
   const keep = new Set([...library.liked, ...library.imports, ...library.recent, ...library.playlists.flatMap((p) => p.trackIds), ...Object.keys(library.downloads || {})]);
   for (const id of Object.keys(library.tracks)) if (!keep.has(id)) delete library.tracks[id];
-  const snapshot = structuredClone(library);
+  const snapshot = nativeAudio ? JSON.stringify(library) : structuredClone(library);
   const operation = saveChain.then(() => native ? native.invoke("save_library", { library: snapshot }) : idbWrite("library", "state", snapshot));
   saveChain = operation.catch(() => {});
   return operation.catch((error) => {
@@ -241,7 +252,7 @@ function trackRows(list, albumId = "", playlistPositions = null) {
   const windowed = trackWindows && list.length > 80;
   const row = index => {
     const original = list[index];
-    const resolved = original.source === 'unmatched' && spotifyState?.resolved.get(original.id);
+    const resolved = original.source === 'unmatched' && resolvedSpotifyTracks.get(original.id);
     const track = resolved ? getTrack(resolved) || original : original;
     const liked = isLiked(track.id);
     return `
@@ -427,12 +438,12 @@ function renderCollection() {
   const title = downloaded ? tr("Downloads") : liked ? tr("Liked songs") : local ? tr("Your music, here.") : collection.name;
   const list = collectionTracks();
   const subtitle = downloaded ? tr("Saved on this device. Playback uses these files before the internet.") : liked ? tr("All the songs that felt like a yes.") : local ? tr("Imported audio saved on this device.") : tr("A little collection, entirely your own.");
-  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import">${icon("plus")}${h(tr("Add music"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Choose audio files") : tr("Explore music"))}`;
+  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar${collection ? ' playlist-toolbar' : ''}"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog" data-id="${h(collection.id)}">${icon("import")}${h(tr("Import"))}</button><button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Import") : tr("Explore music"))}`;
 }
 
 function renderLibrary() {
   const cards = sortPlaylists(library.playlists).map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
-  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="spotify-import">${icon("import")}${h(tr("Import Spotify"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
+  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
 }
 
 function renderSidebar() {
@@ -902,6 +913,19 @@ function closeDialog() { dialog.dataset.kind = ""; dialog.close(); }
 function openDialog(content, kind = "") { dialog.dataset.kind = kind; dialog.innerHTML = content; if (!dialog.open) dialog.showModal(); }
 function dialogTop(title) { return `<div class="dialog-top"><h2 id="dialog-title">${h(title)}</h2><button class="icon-btn" data-action="close-dialog" aria-label="${h(tr("Close dialog"))}">${icon("close")}</button></div>`; }
 
+function importSourceDialog(targetPlaylistId) {
+  const target = targetPlaylistId ? ` data-id="${h(targetPlaylistId)}"` : '';
+  openDialog(`${dialogTop(tr("Where would you like to import music from?"))}
+    <div class="dialog-menu import-sources">
+      <button class="menu-item" data-action="import-from-file"${target} aria-labelledby="import-file-label" aria-describedby="import-file-hint"${importing ? ' disabled' : ''}>
+        ${icon('folder')}<span><strong id="import-file-label">${h(tr("From a file"))}</strong><small id="import-file-hint">${h(tr("Audio files on this device"))}</small></span>
+      </button>
+      <button class="menu-item" data-action="import-from-spotify"${target} aria-labelledby="import-spotify-label" aria-describedby="import-spotify-hint">
+        ${icon('music')}<span><strong id="import-spotify-label">${h(tr("From Spotify"))}</strong><small id="import-spotify-hint">${h(tr("Playlist link or Spotify export"))}</small></span>
+      </button>
+    </div>`, 'import-source');
+}
+
 function appearanceDialog() {
   const currentTheme = document.documentElement.dataset.theme;
   const sync = iconSyncEnabled();
@@ -979,7 +1003,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.6-alpha";
+  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.7-alpha";
   openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
@@ -1005,46 +1029,75 @@ async function metadata(file) {
   });
 }
 
-async function importFiles(files) {
+async function readLocalAudio(file) {
+  if (file.size === 0 || file.size > 256 * 1024 * 1024) throw new Error(tr("File must be between 1 byte and 256 MB"));
+  const bytes = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const id = `local:${hash}`;
+  const previous = library.tracks[id];
+  if (previous && await isDuplicateImport(library.imports.includes(id), previous, file.size, platform === "android" ? native : null) && library.tracks[id]) {
+    return { id };
+  }
+  const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
+  const fileId = previous?.fileId || `${hash}.${extension}`;
+  const duration = previous?.duration || await metadata(file);
+  const nativePath = native ? await native.invoke("save_audio", new Uint8Array(bytes), { headers: { "x-audio-id": fileId } }) : undefined;
+  if (!native) await idbWrite("files", fileId, file);
+  return { id, track: { ...fileMetadata(file.name), genre: "Your files", artwork: "", ...previous, id, fileId, source: "local", duration, nativePath } };
+}
+
+// Retry the library write even when a previously copied file is selected again.
+let audioImportNeedsSave = false;
+
+async function importFiles(files, targetPlaylistId = null) {
   if (importing) return;
+  if (!files.length) return;
   if (!storageReady) { toast(tr("Your library could not be opened. Restart before importing files.")); return; }
   const valid = [...files].filter((file) => /\.(mp3|flac|wav|ogg|m4a|aac|opus|aiff|aif|weba|webm)$/i.test(file.name) || file.type.startsWith("audio/"));
   if (!valid.length) { toast(tr("Choose audio files such as MP3, FLAC, WAV, or M4A.")); return; }
+  const target = () => library.playlists.find(item => item.id === targetPlaylistId);
+  if (targetPlaylistId && !target()) { toast(tr("This playlist is gone.")); return; }
   importing = true;
   let added = 0, duplicates = 0, failed = 0;
   $("#file-input").disabled = true;
   document.querySelectorAll('[data-action="import"]').forEach((button) => button.setAttribute("aria-busy", "true"));
   for (const [index, file] of valid.entries()) {
+    if (targetPlaylistId && !target()) break;
     toast(tr('Importing audio… {done} / {total}', { done: index + 1, total: valid.length }), 0);
     try {
-      if (file.size === 0 || file.size > 256 * 1024 * 1024) throw new Error(tr("File must be between 1 byte and 256 MB"));
-      const bytes = await file.arrayBuffer();
-      const digest = await crypto.subtle.digest("SHA-256", bytes);
-      const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-      const id = `local:${hash}`;
-      const listed = library.imports.includes(id);
-      const previous = library.tracks[id];
-      if (await isDuplicateImport(listed, previous, file.size, platform === "android" ? native : null)) {
-        duplicates++;
-        continue;
+      const { id, track } = await readLocalAudio(file);
+      if (track) {
+        remember(track);
+        if (!library.imports.includes(id)) library.imports.unshift(id);
+        audioImportNeedsSave = true;
       }
-      const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
-      const fileId = previous?.fileId || `${hash}.${extension}`;
-      const duration = previous?.duration || await metadata(file);
-      const nativePath = native ? await native.invoke("save_audio", new Uint8Array(bytes), { headers: { "x-audio-id": fileId } }) : undefined;
-      if (!native) await idbWrite("files", fileId, file);
-      const track = { ...fileMetadata(file.name), genre: "Your files", artwork: "", ...previous, id, fileId, source: "local", duration, nativePath };
-      remember(track);
-      if (!listed) library.imports.unshift(id);
-      await saveLibrary();
-      added++;
+      const playlist = targetPlaylistId && target();
+      const appended = playlist && !playlist.trackIds.includes(id);
+      if (appended) {
+        playlist.trackIds.push(id);
+        audioImportNeedsSave = true;
+      }
+      if (audioImportNeedsSave) {
+        await saveLibrary();
+        audioImportNeedsSave = false;
+      }
+      if (targetPlaylistId && !playlist) break;
+      if (targetPlaylistId ? appended : track) added++;
+      else duplicates++;
     } catch (error) { console.error(error); failed++; }
   }
   importing = false;
   $("#file-input").disabled = false;
+  const fileChoice = dialog.querySelector('[data-action="import-from-file"]');
+  if (fileChoice) fileChoice.disabled = false;
   $("#file-input").value = "";
-  navigate("local");
-  const summary = [tr('Imported {count}.', { count: countLabel(added) }), duplicates ? tr('Already in your library: {count}', { count: duplicates }) : "", failed ? tr('Could not import: {count}', { count: failed }) : ""].filter(Boolean).join(" · ");
+  if (targetPlaylistId) render();
+  else navigate("local");
+  const playlist = targetPlaylistId && target();
+  const imported = playlist ? tr('Added to “{playlist}”: {count}', { playlist: playlist.name, count: countLabel(added) })
+    : targetPlaylistId ? tr('This playlist is gone.') : tr('Imported {count}.', { count: countLabel(added) });
+  const summary = [imported, duplicates ? tr(playlist ? 'Already in this playlist: {count}' : 'Already in your library: {count}', { count: duplicates }) : "", failed ? tr('Could not import: {count}', { count: failed }) : ""].filter(Boolean).join(" · ");
   toast(summary, failed ? 8500 : 5000);
   document.querySelectorAll('[data-action="import"]').forEach((button) => button.removeAttribute("aria-busy"));
 }
@@ -1215,44 +1268,83 @@ function showAudioOutput() {
   openDialog(`${dialogTop(tr("Sound output"))}<div class="sound-summary"><p><strong>${h(tr("System default output"))}</strong><br>${h(tr("Undertone follows your computer’s selected output."))}</p><p>${h(output)}</p><p>${h(tr("Player volume:"))} ${Math.round(audio.volume * 100)}%</p></div><button class="primary-btn" data-action="restore-output" ${!current ? 'disabled' : ''}>${h(tr("Restore Undertone sound"))}</button><p class="dialog-description">${h(tr("This restores this app’s sound without changing the system’s master volume or other apps."))}</p>`, 'audio');
 }
 
+function newSpotifyImport(targetPlaylistId = null) {
+  return { targetPlaylistId, collections: [], previewCount: 0, phase: 'ready', checked: 0, total: 0, note: '', paused: false };
+}
+
+function openSpotifyImport(targetPlaylistId = null) {
+  // A foreground file read or matching pass must finish with its original destination.
+  if (!spotifyState || (spotifyState.targetPlaylistId !== targetPlaylistId && !['reading', 'matching'].includes(spotifyState.phase))) {
+    spotifyState = newSpotifyImport(targetPlaylistId);
+  }
+  spotifyImportDialog();
+}
+
+function spotifyImportTracks() {
+  if (!spotifyState?.targetPlaylistId) return Object.values(library.tracks);
+  const target = library.playlists.find(item => item.id === spotifyState.targetPlaylistId);
+  return [...new Set(target?.trackIds)].map(id => library.tracks[id]).filter(Boolean);
+}
+
 function spotifyImportDialog() {
-  if (!spotifyState) spotifyState = { collections: [], phase: 'ready', checked: 0, total: 0, note: '', paused: false, resolved: new Map() };
+  if (!spotifyState) spotifyState = newSpotifyImport();
   const state = spotifyState;
+  const target = state.targetPlaylistId && library.playlists.find(item => item.id === state.targetPlaylistId);
   const busy = ['reading', 'matching'].includes(state.phase);
-  const unmatched = Object.values(library.tracks).filter(track => track.source === 'unmatched' && track.importRecord);
+  const unmatched = busy || spotifyBackgroundBusy() ? [] : spotifyImportTracks().filter(track => track.source === 'unmatched' && track.importRecord);
+  const hasPending = unmatched.some(track => !track.spotifyMatchChecked);
+  const resume = hasPending && !busy && !state.collections.length
+    ? `<button class="primary-btn" data-action="spotify-retry">${h(tr("Resume matching"))}</button><p class="import-help">${h(tr("Your Spotify collections are saved. Continue matching without choosing the export again."))}</p>` : '';
   const selected = state.collections.filter(item => item.selected !== false);
-  openDialog(`${dialogTop(tr("Import from Spotify"))}<p class="dialog-description">${h(tr("Bring your playlists and Liked Songs into Undertone. Songs are matched to the Undertone catalog; anything unmatched stays visible for review."))}</p><div class="spotify-import-tools"><button class="primary-btn" data-action="spotify-files" ${busy ? 'disabled' : ''}>${h(tr("Choose export files"))}</button><button class="secondary-btn" data-action="spotify-help">${h(tr("Get Spotify account data"))}</button></div><p class="import-help">${h(tr("Choose a Spotify account-data ZIP, Playlist / YourLibrary JSON files, or a playlist CSV. YourLibrary imports into Liked Songs. Files are read on this computer."))}</p><details class="spotify-link"><summary>${h(tr("Import a public playlist link"))}</summary><form id="spotify-link-form"><input id="spotify-url" type="text" placeholder="https://open.spotify.com/playlist/…" aria-label="${h(tr("Spotify playlist link"))}" required><button class="secondary-btn" ${busy ? 'disabled' : ''}>${h(tr("Read link"))}</button></form><p class="import-help">${h(tr("Spotify may expose only a preview. Use an export file for a complete playlist or Liked Songs."))}</p></details>${state.note ? `<p class="import-note">${h(state.note)}</p>` : ''}${state.collections.length ? `<div class="spotify-collections">${state.collections.map((item, index) => `<label class="spotify-collection"><input type="checkbox" data-spotify-selected="${index}" ${item.selected !== false ? 'checked' : ''} ${busy ? 'disabled' : ''}><span><strong>${h(item.name)}</strong><small>${countLabel(item.tracks.length)}${item.ignored ? ` · ${h(tr('{count} other entries skipped', { count: item.ignored }))}` : ''}${item.partial ? ' · Public preview only' : ''}</small></span><select data-spotify-kind="${index}" aria-label="Import ${h(item.name)} as" ${busy ? 'disabled' : ''}><option value="playlist" ${item.kind === 'playlist' ? 'selected' : ''}>${h(tr("New playlist"))}</option><option value="liked" ${item.kind === 'liked' ? 'selected' : ''}>${h(tr("Liked Songs"))}</option></select></label>`).join('')}</div>` : ''}${state.phase === 'matching' || state.checked ? `<p class="import-status">${h(tr('{done} / {total} recordings checked', { done: state.checked, total: state.total }))}</p><progress class="import-progress" value="${state.checked}" max="${Math.max(1, state.total)}"></progress>` : ''}<div class="dialog-buttons">${state.collections.length && !['matching', 'done'].includes(state.phase) ? `<button class="primary-btn" data-action="spotify-start" ${!selected.length || busy ? 'disabled' : ''}>${h(tr("Import selected collections"))}</button>` : ''}${state.phase === 'matching' ? `<button class="secondary-btn" data-action="spotify-pause">${h(tr("Pause matching"))}</button>` : unmatched.length ? `<button class="secondary-btn" data-action="spotify-retry">${h(tr("Match"))} ${unmatched.length} remaining songs</button>` : ''}${state.phase === 'done' ? `<button class="secondary-btn" data-action="open-imported-library">${h(tr("Open your library"))}</button>` : ''}</div>${unmatched.length && state.phase !== 'matching' ? `<div class="import-errors"><h3>${h(tr('Recordings to review ({count})', { count: unmatched.length }))}</h3><p>${h(tr("These entries are preserved in their playlists and Liked Songs."))}</p>${unmatched.slice(0, 12).map(track => `<button class="unmatched-import" data-action="find-spotify-match" data-id="${h(track.id)}"><strong>${h(track.title)}</strong><span>${h(track.artist)} · Choose recording</span></button>`).join('')}</div>` : ''}`, 'spotify');
+  openDialog(`${dialogTop(tr("Import from Spotify"))}
+    <p class="dialog-description">${h(target ? tr("Add tracks to “{name}” in export order.", { name: target.name }) : tr("Bring your playlists and Liked Songs into Undertone. Songs are matched to the Undertone catalog; anything unmatched stays visible for review."))}</p>
+    ${spotifyBackgroundPanel()}${resume}
+    <div class="spotify-import-tools"><button class="primary-btn" data-action="spotify-files" ${busy ? 'disabled' : ''}>${h(tr("Choose export files"))}</button><button class="secondary-btn" data-action="spotify-help">${h(tr("Get Spotify account data"))}</button></div>
+    <p class="import-help">${h(tr(target ? "Choose a Spotify ZIP, JSON, or CSV file. Tracks from all selected collections will be added to this playlist." : "Choose a Spotify account-data ZIP, Playlist / YourLibrary JSON files, or a playlist CSV. YourLibrary imports into Liked Songs. Files are read on this computer."))}</p>
+    <details class="spotify-link"><summary>${h(tr("Import a public playlist link"))}</summary><form id="spotify-link-form"><input id="spotify-url" type="text" placeholder="https://open.spotify.com/playlist/…" aria-label="${h(tr("Spotify playlist link"))}" required><button class="secondary-btn" ${busy ? 'disabled' : ''}>${h(tr("Read link"))}</button></form><p class="import-help">${h(tr("Spotify may expose only a preview. Use an export file for a complete playlist or Liked Songs."))}</p></details>
+    ${state.note ? `<p class="import-note">${h(state.note)}</p>` : ''}
+    ${state.collections.length ? `<div class="spotify-collections">${state.collections.map((item, index) => `<label class="spotify-collection"><input type="checkbox" data-spotify-selected="${index}" ${item.selected !== false ? 'checked' : ''} ${busy ? 'disabled' : ''}><span><strong>${h(item.name)}</strong><small>${countLabel(item.tracks.length)}${item.ignored ? ` · ${h(tr('{count} other entries skipped', { count: item.ignored }))}` : ''}${item.partial ? ` · ${h(tr("Public preview only"))}` : ''}</small></span>${target ? '' : `<select data-spotify-kind="${index}" aria-label="Import ${h(item.name)} as" ${busy ? 'disabled' : ''}><option value="playlist" ${item.kind === 'playlist' ? 'selected' : ''}>${h(tr("New playlist"))}</option><option value="liked" ${item.kind === 'liked' ? 'selected' : ''}>${h(tr("Liked Songs"))}</option></select>`}</label>`).join('')}</div>` : ''}
+    ${state.phase === 'matching' || state.checked ? `<p class="import-status">${h(tr('{done} / {total} recordings checked', { done: state.checked, total: state.total }))}</p><progress class="import-progress" value="${state.checked}" max="${Math.max(1, state.total)}"></progress>` : ''}
+    <div class="dialog-buttons">
+      ${state.collections.length && !['matching', 'done'].includes(state.phase) ? `<button class="primary-btn" data-action="spotify-start" ${!selected.length || busy ? 'disabled' : ''}>${h(tr(target ? "Add to this playlist" : "Import selected collections"))}</button>` : ''}
+      ${state.phase === 'matching' ? `<button class="secondary-btn" data-action="spotify-pause">${h(tr("Pause matching"))}</button>` : unmatched.length && !resume ? `<button class="secondary-btn" data-action="spotify-retry">${h(tr("Match remaining recordings ({count})", { count: unmatched.length }))}</button>` : ''}
+      ${state.phase === 'done' ? `<button class="secondary-btn" data-action="open-imported-library">${h(tr(target ? "Open playlist" : "Open your library"))}</button>` : ''}
+    </div>
+    ${unmatched.length && state.phase !== 'matching' ? `<div class="import-errors"><h3>${h(tr('Recordings to review ({count})', { count: unmatched.length }))}</h3><p>${h(tr("These entries are preserved in their playlists and Liked Songs."))}</p>${unmatched.slice(0, 12).map(track => `<button class="unmatched-import" data-action="find-spotify-match" data-id="${h(track.id)}"><strong>${h(track.title)}</strong><span>${h(track.artist)} · ${h(tr("Choose recording"))}</span></button>`).join('')}</div>` : ''}`, 'spotify');
 }
 
 async function readSpotifyFiles(files) {
   if (!deviceStorage) { toast(tr("Spotify export import is available in the installed app.")); return; }
-  spotifyState = { collections: [], phase: 'reading', checked: 0, total: 0, note: 'Reading your export files…', paused: false, resolved: new Map() };
+  if (['reading', 'matching'].includes(spotifyState?.phase)) return;
+  spotifyState = newSpotifyImport(spotifyState?.targetPlaylistId);
+  spotifyState.phase = 'reading';
+  spotifyState.note = tr('Reading your export files…');
   spotifyImportDialog();
   try {
     for (const file of files) {
       if (file.size > 32 * 1024 * 1024) throw new Error(tr("Choose files smaller than 32 MB, or select individual playlist exports."));
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      const parsed = await native.invoke('parse_spotify', bytes, { headers: { 'x-import-name': encodeURIComponent(file.name) } });
-      spotifyState.collections.push(...parsed.collections.map(item => ({ ...item, selected: true })));
+      const parsed = await parseSpotifyFile(file);
+      appendSpotifyPreview(spotifyState, parsed.collections);
     }
-    spotifyState.note = tr("Choose the collections to import. This adds to your library and preserves existing playlists.");
-  } catch (error) { spotifyState.note = String(error.message || error); }
+    spotifyState.note = tr(spotifyState.targetPlaylistId ? "Choose the collections to add to this playlist." : "Choose the collections to import. This adds to your library and preserves existing playlists.");
+  } catch (error) { spotifyState.note = tr(String(error.message || error)); }
   spotifyState.phase = 'ready';
-  spotifyImportDialog();
+  if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
 }
 
 async function readSpotifyLink(value) {
   if (!spotifyState) spotifyImportDialog();
+  if (['reading', 'matching'].includes(spotifyState.phase)) return;
   spotifyState.phase = 'reading';
   spotifyState.note = tr("Reading public playlist metadata…");
   spotifyImportDialog();
   try {
     const data = await musicRequest('spotify_url', { url: value });
-    spotifyState.collections.push(...data.collections.map(item => ({ ...item, selected: true })));
+    appendSpotifyPreview(spotifyState, data.collections);
     spotifyState.note = tr("Public links can contain only a preview. The listed count is what will be imported; use an export file for the complete collection.");
-  } catch (error) { spotifyState.note = String(error.message || error); }
+  } catch (error) { spotifyState.note = tr(String(error.message || error)); }
   spotifyState.phase = 'ready';
-  spotifyImportDialog();
+  if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
 }
 
 async function startSpotifyImport() {
@@ -1262,84 +1354,237 @@ async function startSpotifyImport() {
   spotifyState.phase = 'reading';
   spotifyState.note = tr("Preparing your library…");
   spotifyImportDialog();
-  const knownUris = new Map();
-  for (const track of Object.values(library.tracks)) if (track.source !== "unmatched") for (const uri of track.spotifyUris || []) knownUris.set(uri, track);
-  for (const item of selected) {
-    const ids = [];
-    for (const record of item.tracks) {
-      const placeholder = await spotifyPlaceholder(record);
-      const known = record.uri ? knownUris.get(record.uri) : null;
-      if (known) ids.push(known.id);
-      else { remember(placeholder); ids.push(placeholder.id); }
+  async function prepareAndSave() {
+    const targetId = spotifyState.targetPlaylistId;
+    const prepared = await prepareSpotifyCollections(library, selected, targetId);
+    if (targetId) appendSpotifyToPlaylist(library.playlists.find(item => item.id === targetId), prepared.additions);
+    for (const placeholder of prepared.placeholders.values()) remember(placeholder);
+    if (prepared.liked.size) library.liked = [...new Set([...library.liked, ...prepared.liked])];
+    for (const playlist of library.playlists) {
+      if (prepared.reused.has(playlist.id)) playlist.spotifyImportKey = prepared.reused.get(playlist.id);
     }
-    if (item.kind === 'liked') library.liked = [...new Set([...library.liked, ...ids])];
-    else library.playlists.unshift({ id: crypto.randomUUID(), name: item.name, trackIds: ids, importedFrom: 'Spotify', importedAt: Date.now() });
+    if (prepared.playlists.length) library.playlists = [...prepared.playlists.reverse(), ...library.playlists];
+    await saveLibrary();
   }
-  await saveLibrary();
+  try {
+    if (spotifyJob) await spotifyJob.withLibrary(prepareAndSave);
+    else await prepareAndSave();
+    // Keep the preview until the append is durable so a failed save can be retried.
+    spotifyState.collections = [];
+    spotifyState.previewCount = 0;
+  } catch (error) {
+    spotifyState.phase = 'ready';
+    spotifyState.note = tr(String(error.message || error));
+    if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
+    return;
+  }
   render();
-  await matchSpotifyRemaining();
+  return matchSpotifyRemaining(false);
 }
 
-function useSpotifyRecording(oldId, candidate) {
-  if (!library.tracks[oldId]?.importRecord) return;
-  const track = replaceLibraryTrack(library, oldId, candidate);
-  tracks.delete(oldId);
-  tracks.set(track.id, track);
+function useSpotifyRecordings(candidates) {
+  const replacements = replaceLibraryTracks(library, candidates);
+  if (!replacements.size) return;
+  for (const [oldId, id] of replacements) {
+    tracks.delete(oldId);
+    tracks.set(id, library.tracks[id]);
+    resolvedSpotifyTracks.set(oldId, id);
+  }
   for (const row of document.querySelectorAll('.track-row[data-track-id]')) {
-    if (row.dataset.trackId !== oldId) continue;
+    const id = replacements.get(row.dataset.trackId);
+    if (!id) continue;
     const number = row.querySelector('.track-number span')?.textContent;
     const holder = document.createElement('div');
-    holder.innerHTML = trackRows([track]);
+    holder.innerHTML = trackRows([library.tracks[id]]);
     const replacement = holder.querySelector('.track-row');
     replacement.dataset.trackPosition = row.dataset.trackPosition;
     if (row.dataset.playlistIndex !== undefined) replacement.dataset.playlistIndex = row.dataset.playlistIndex;
     if (number) replacement.querySelector('.track-number span').textContent = number;
     row.replaceWith(replacement);
   }
-  spotifyState?.resolved.set(oldId, track.id);
-  return track;
 }
 
-async function matchSpotifyRemaining() {
+function applySpotifyJobResults(items) {
+  const matches = new Map();
+  for (const item of items) {
+    const original = library.tracks[item.id];
+    if (original?.source !== 'unmatched' || !original.importRecord) continue;
+    if (item.track) matches.set(item.id, item.track);
+    else {
+      original.spotifyMatchChecked = true;
+      original.matchReason = item.reason || tr("No clear match yet.");
+    }
+  }
+  useSpotifyRecordings(matches);
+}
+
+function spotifyBackgroundBusy() {
+  const job = spotifyJob?.state;
+  return !!job && (job.state === 'running' || job.state === 'paused' || job.pending > 0) &&
+    (!spotifyState?.targetPlaylistId || !job.playlistId || job.playlistId === spotifyState.targetPlaylistId);
+}
+
+function spotifyJobMode(job) {
+  if (job.state === 'running' && job.serviceActive === false) return 'paused';
+  return job.state;
+}
+
+function spotifyBackgroundPanel() {
+  if (!spotifyJob) return '';
+  const job = spotifyJob.state;
+  const mode = spotifyJobMode(job);
+  if (!job.jobId || !job.total) return '<div id="spotify-background"></div>';
+  const label = mode === 'running' ? 'Importing in the background' : mode === 'paused'
+    ? (job.reason === 'offline' ? 'Import paused. Check your connection.' : 'Background import paused')
+    : 'Background import complete';
+  const count = tr('{done} / {total} recordings checked', { done: job.checked, total: job.total });
+  const action = mode === 'running' ? 'spotify-job-pause' : mode === 'paused' ? 'spotify-job-resume' : '';
+  return `<div id="spotify-background" class="spotify-job" data-mode="${h(mode)}" data-job="${h(job.jobId)}" data-reason="${h(job.reason || '')}"><strong>${h(tr(label))}</strong><p class="import-status">${h(count)}</p><progress class="import-progress" value="${job.checked}" max="${job.total}"></progress>${action ? `<button class="secondary-btn" data-action="${action}">${h(tr(mode === 'running' ? 'Pause matching' : 'Resume matching'))}</button>` : ''}</div>`;
+}
+
+let spotifyNeedsRender = false;
+function updateSpotifyJobPanel(job) {
+  if (desktop) {
+    const shortcut = $('#desktop-import-progress');
+    const mode = spotifyJobMode(job);
+    shortcut.hidden = !job.total || !['running', 'paused'].includes(mode);
+    if (!shortcut.hidden) {
+      shortcut.querySelector('span').textContent = tr(mode === 'paused' ? 'Spotify import paused · {done} / {total}' : 'Spotify import · {done} / {total}', { done: job.checked, total: job.total });
+    }
+  }
+  if (job.state === 'running' || job.pending) spotifyNeedsRender = true;
+  if (spotifyNeedsRender && job.state !== 'running' && !job.pending) {
+    spotifyNeedsRender = false;
+    render();
+    resolvedSpotifyTracks.clear();
+    if (dialog.open && dialog.dataset.kind === 'spotify' && !spotifyState.collections.length &&
+        spotifyState.phase !== 'reading' && !dialog.querySelector('details[open]')) spotifyImportDialog();
+  }
+  const panel = document.getElementById('spotify-background');
+  if (!panel || !job.jobId) return;
+  if (panel.dataset.mode !== spotifyJobMode(job) || panel.dataset.job !== job.jobId || panel.dataset.reason !== (job.reason || '')) {
+    panel.outerHTML = spotifyBackgroundPanel();
+    return;
+  }
+  panel.querySelector('.import-status').textContent = tr('{done} / {total} recordings checked', { done: job.checked, total: job.total });
+  const progress = panel.querySelector('progress');
+  progress.max = job.total;
+  progress.value = job.checked;
+}
+
+async function matchSpotifyRemaining(retryMisses = true) {
   if (!spotifyState) spotifyImportDialog();
-  if (spotifyState.phase === 'matching') return;
-  const pending = Object.values(library.tracks).filter(track => track.source === 'unmatched' && track.importRecord);
+  if (spotifyState.phase === 'matching' || (retryMisses && spotifyState.phase === 'reading')) return;
+  if (spotifyJob) {
+    const preview = spotifyState;
+    try {
+      if (retryMisses) await saveLibrary();
+      await spotifyJob.command('start', { playlistId: preview.targetPlaylistId || '', retryMisses, language: appLanguage() });
+      preview.note = spotifyJob.state.total ? '' : tr('No new recordings to match.');
+    } catch (error) {
+      preview.note = tr(String(error.message || error));
+    }
+    preview.phase = 'done';
+    if (dialog.open && dialog.dataset.kind === 'spotify' && spotifyState === preview) spotifyImportDialog();
+    return;
+  }
+  const pending = [], reviewed = [];
+  for (const track of spotifyImportTracks()) {
+    if (track.source !== 'unmatched' || !track.importRecord) continue;
+    if (!track.spotifyMatchChecked) pending.push(track.id);
+    else if (retryMisses) reviewed.push(track.id);
+  }
+  // After an interruption resume where matching stopped. A separate retry,
+  // once the fresh tracks are finished, can revisit previous catalog misses.
+  if (!pending.length) for (const id of reviewed) pending.push(id);
   spotifyState.phase = 'matching';
   spotifyState.paused = false;
   spotifyState.checked = 0;
   spotifyState.total = pending.length;
   spotifyState.note = tr("Your collections are saved. Matching recordings now; you can close this window and keep listening.");
-  spotifyImportDialog();
+  if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
+  const found = new Map();
+  let dirty = 0, lastApply = performance.now(), saveTimer, saveError;
+  let firstBatch = true, saving = Promise.resolve();
+  function applyMatches() {
+    useSpotifyRecordings(found);
+    found.clear();
+    lastApply = performance.now();
+  }
+  function checkpoint() {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    if (!dirty) return saving;
+    applyMatches();
+    const changes = dirty;
+    dirty = 0;
+    saving = saveLibrary().catch(error => { dirty += changes; throw error; });
+    return saving;
+  }
+  function flushPending() {
+    checkpoint().catch(error => { saveError = error; spotifyState.paused = true; });
+  }
+  const onHidden = () => { if (document.hidden) flushPending(); };
+  document.addEventListener('visibilitychange', onHidden);
   try {
+    if (retryMisses) await saveLibrary();
     for (let index = 0; index < pending.length; index += 4) {
       if (spotifyState.paused) break;
-      const batch = pending.slice(index, index + 4);
-      const result = await musicRequest('match', { tracks: batch.map(track => track.importRecord) });
+      const ids = pending.slice(index, index + 4);
+      const batch = ids.map(id => library.tracks[id]).filter(track => track?.source === 'unmatched');
+      const result = batch.length ? await musicRequest('match', { tracks: batch.map(track => track.importRecord), includeCandidates: false }) : { matches: [] };
+      if (result.matches.length !== batch.length) throw new Error(tr('Incomplete catalog response.'));
       for (let offset = 0; offset < batch.length; offset++) {
         const original = batch[offset];
         const match = result.matches[offset];
-        if (match?.track) useSpotifyRecording(original.id, match.track);
-        else if (library.tracks[original.id]) library.tracks[original.id].matchReason = match?.reason || tr("No clear match yet.");
+        if (match?.track) found.set(original.id, match.track);
+        else if (library.tracks[original.id] === original) {
+          original.matchReason = match?.reason || tr("No clear match yet.");
+          original.spotifyMatchChecked = !match?.error;
+        }
       }
-      spotifyState.checked += batch.length;
-      // ponytail: checkpoint the JSON library every 128 matches; use incremental storage if large imports become frequent.
-      if (spotifyState.checked % 128 === 0) await saveLibrary();
-      if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
+      spotifyState.checked += ids.length;
+      dirty += batch.length;
+      if (dirty && (firstBatch || dirty >= 128)) {
+        await checkpoint();
+        firstBatch = false;
+      } else if (dirty) {
+        if (found.size >= 32 || performance.now() - lastApply >= 1000) applyMatches();
+        // A slow catalog request can stay in flight much longer than the save interval.
+        if (saveTimer === undefined) saveTimer = setTimeout(flushPending, 5000);
+      }
+      if (dialog.open && dialog.dataset.kind === 'spotify') {
+        const status = dialog.querySelector('.import-status');
+        const progress = dialog.querySelector('.import-progress');
+        if (status && progress) {
+          status.textContent = tr('{done} / {total} recordings checked', { done: spotifyState.checked, total: spotifyState.total });
+          progress.value = spotifyState.checked;
+        }
+      }
       if (result.matches.length && result.matches.every(match => match.error)) {
         spotifyState.paused = true;
         spotifyState.note = tr("Matching paused because the catalog could not be reached. Your collections are saved; retry the remaining songs later.");
         break;
       }
     }
+    if (saveError) throw saveError;
+    await checkpoint();
   } catch (error) {
     spotifyState.paused = true;
     spotifyState.note = tr('Your collections are saved. Matching paused: {error}', { error: tr(String(error.message || error)) });
+    if (dirty) {
+      try { await checkpoint(); }
+      catch (error) { spotifyState.note = String(error.message || error); }
+    }
+  } finally {
+    clearTimeout(saveTimer);
+    document.removeEventListener('visibilitychange', onHidden);
   }
-  await saveLibrary();
   spotifyState.phase = 'done';
   if (!spotifyState.paused) spotifyState.note = tr("Import finished. Matched recordings are playable; remaining entries are kept for review.");
   else if (spotifyState.note === tr('Pausing after the current recordings…')) spotifyState.note = tr("Matching paused. The remaining entries are saved and can be matched later.");
   render();
+  resolvedSpotifyTracks.clear();
   if (dialog.open && dialog.dataset.kind === 'spotify') spotifyImportDialog();
   toast(spotifyState.paused ? tr("Spotify collections saved. Matching can continue later.") : tr("Spotify import finished. Unmatched entries are kept for review."));
 }
@@ -1416,20 +1661,32 @@ const actions = {
   "open-downloads": () => { closeDialog(); navigate("downloads"); },
   "remove-download": async button => { const track = getTrack(button.dataset.id || pendingTrack); if (!track) return; await native.invoke("remove_download", { id: track.remoteId, source: track.source }); delete library.downloads[track.id]; await saveLibrary(); closeDialog(); render(); toast(tr("Downloaded copy removed. The song stays in your library.")); },
   "audio-output": () => showAudioOutput(),
-  "spotify-import": () => spotifyImportDialog(),
+  "import-from-spotify": button => openSpotifyImport(button.dataset.id || null),
+  "show-spotify-progress": () => {
+    openSpotifyImport(spotifyJob.state.playlistId || null);
+    spotifyJob.refresh();
+  },
+  "import-from-file": button => {
+    const input = $("#file-input");
+    input.dataset.playlistId = button.dataset.id || '';
+    input.value = "";
+    input.click();
+  },
   "spotify-files": () => $("#spotify-file-input").click(),
   "spotify-help": () => native.invoke("spotify_help"),
   "spotify-start": () => startSpotifyImport(),
+  "spotify-job-pause": () => spotifyJob.command('pause', { jobId: spotifyJob.state.jobId }),
+  "spotify-job-resume": () => spotifyJob.command('resume', { jobId: spotifyJob.state.jobId, language: appLanguage() }),
   "spotify-retry": () => matchSpotifyRemaining(),
   "spotify-pause": () => { if (spotifyState) { spotifyState.paused = true; spotifyState.note = tr("Pausing after the current recordings…"); spotifyImportDialog(); } },
   "find-spotify-match": button => findSpotifyMatch(button.dataset.id),
-  "choose-spotify-match": async button => { const track = getTrack(button.dataset.id); if (!track) return; useSpotifyRecording(button.dataset.oldId, track); await saveLibrary(); closeDialog(); render(); toast(tr("Recording selected. Your playlist order is preserved.")); },
-  "open-imported-library": () => { closeDialog(); navigate("library"); },
+  "choose-spotify-match": async button => { const track = getTrack(button.dataset.id); if (!track) return; useSpotifyRecordings([[button.dataset.oldId, track]]); await saveLibrary(); closeDialog(); render(); toast(tr("Recording selected. Your playlist order is preserved.")); },
+  "open-imported-library": () => { closeDialog(); navigate(spotifyState?.targetPlaylistId ? 'playlist:' + spotifyState.targetPlaylistId : "library"); },
   "restore-output": async () => { await audio.restoreOutput(); $("#volume").value = Math.round(audio.volume * 100); library.volume = audio.volume; await saveLibrary(); updateVolume(); showAudioOutput(); },
   "release-queue": async button => enqueueTracks((await ensureAlbum(button.dataset.id)).tracks),
   "autoplay": () => { autoplay = !autoplay; renderQueue(); },
   discover: () => navigate("discover"),
-  import: () => $("#file-input").click(),
+  import: button => importSourceDialog(button.dataset.id),
   about,
   retry: () => loadCatalog(true),
   refresh: () => loadCatalog(true),
@@ -1547,7 +1804,17 @@ $("#search").addEventListener("input", () => {
 });
 $("#search-form").addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(searchTimer); if (query) loadCatalog(); });
 $("#clear-search").addEventListener("click", () => { clearTimeout(searchTimer); ++requestId; query = ""; $("#search").value = ""; render(); $("#search").focus(); });
-$("#file-input").addEventListener("change", (event) => importFiles(event.target.files));
+$("#file-input").addEventListener("change", event => {
+  const input = event.target;
+  const files = [...input.files];
+  const targetPlaylistId = input.dataset.playlistId || null;
+  delete input.dataset.playlistId;
+  input.value = "";
+  if (!files.length) return;
+  if (dialog.open && dialog.dataset.kind === 'import-source') closeDialog();
+  importFiles(files, targetPlaylistId);
+});
+$("#file-input").addEventListener("cancel", event => { delete event.target.dataset.playlistId; });
 $("#spotify-file-input").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (files.length) readSpotifyFiles(files); });
 document.addEventListener("change", (event) => {
   let iconChange;
@@ -1568,7 +1835,12 @@ document.addEventListener("change", (event) => {
       else toast(message);
     });
   }
-  if (event.target.dataset.spotifySelected !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifySelected)]; if (item) item.selected = event.target.checked; }
+  if (event.target.dataset.spotifySelected !== undefined && spotifyState) {
+    const item = spotifyState.collections[Number(event.target.dataset.spotifySelected)];
+    if (item) item.selected = event.target.checked;
+    const start = dialog.querySelector('[data-action="spotify-start"]');
+    if (start) start.disabled = !spotifyState.collections.some(collection => collection.selected !== false);
+  }
   if (event.target.dataset.spotifyKind !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifyKind)]; if (item && ["playlist", "liked"].includes(event.target.value)) item.kind = event.target.value; }
   if (event.target.id === "sort") { sort = event.target.value; render(); }
   if (event.target.id === "release-filter") { releaseFilter = event.target.value; releaseLimit = 8; render(); }
@@ -1700,6 +1972,23 @@ if (nativeAudio) {
 
 try { await loadLibrary(); }
 catch (error) { console.error(error); toast(tr("Your saved library could not be opened. It has been left untouched. Restart the app before saving changes."), 10000); }
+if (spotifyJob && storageReady) {
+  const openImportProgress = () => {
+    openSpotifyImport();
+    spotifyJob.refresh();
+  };
+  if (desktop) {
+    window.undertoneOpenSpotifyImport = async () => {
+      if (await native.invoke('consume_spotify_import_intent')) openImportProgress();
+    };
+    window.undertoneOpenSpotifyImport().catch(console.error);
+  } else {
+    window.undertoneOpenSpotifyImport = openImportProgress;
+    if (window.UndertoneDevice.consumeSpotifyImportIntent()) openImportProgress();
+  }
+  spotifyJob.refresh();
+  document.addEventListener('visibilitychange', () => spotifyJob.refresh());
+}
 if (nativeAudio) {
   try {
     const restored = JSON.parse(nativeAudio.queue());

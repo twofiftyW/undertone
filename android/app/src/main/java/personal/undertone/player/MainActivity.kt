@@ -1,13 +1,17 @@
 package personal.undertone.player
 
 import android.app.Activity
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.util.Base64
+import android.util.JsonReader
+import android.util.JsonToken
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -24,14 +28,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.StringReader
 import java.net.NetworkInterface
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var phoneDiscovery: PhoneDiscovery
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var unregisterBackCallback: (() -> Unit)? = null
+    private val openSpotifyImport = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +99,33 @@ class MainActivity : Activity() {
             dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             unregisterBackCallback = { dispatcher.unregisterOnBackInvokedCallback(callback) }
         }
+        handleImportIntent(intent)
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleImportIntent(intent)
+    }
+
+    private fun handleImportIntent(intent: Intent?) {
+        if (intent?.action != SpotifyImportService.OPEN_IMPORT) return
+        intent.action = null
+        openSpotifyImport.set(true)
+        webView.evaluateJavascript("if (window.undertoneOpenSpotifyImport && window.UndertoneDevice.consumeSpotifyImportIntent()) window.undertoneOpenSpotifyImport()", null)
+    }
+
+    fun consumeImportIntent(): Boolean = openSpotifyImport.getAndSet(false)
+
+    fun requestImportNotifications() = runOnUiThread {
+        if (Build.VERSION.SDK_INT < 33 || isFinishing || isDestroyed ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return@runOnUiThread
+        val preferences = getSharedPreferences("spotify-import", Context.MODE_PRIVATE)
+        if (!preferences.getBoolean("askedForNotifications", false)) {
+            preferences.edit().putBoolean("askedForNotifications", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42)
+        }
     }
 
     private fun navigateBack() {
@@ -123,9 +156,12 @@ class MainActivity : Activity() {
 }
 
 class DeviceBridge(private val context: Context, private val callback: (String, String) -> Unit) {
+    companion object {
+        private val libraryWriter = Executors.newSingleThreadExecutor()
+        private val workers = Executors.newFixedThreadPool(3)
+    }
     val phoneDiscovery = PhoneDiscovery(context.applicationContext)
     private val launcherIcons = LauncherIcons(context)
-    private val workers = Executors.newFixedThreadPool(3)
     private val directory = File(context.filesDir, "audio").apply { mkdirs() }
     private fun file(id: String): File {
         require(Regex("[a-f0-9]{64}\\.[a-z0-9]{1,10}").matches(id))
@@ -151,6 +187,24 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
 
     @JavascriptInterface fun request(id: String, operation: String, args: String) {
         if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 1024 * 1024) return
+        if (operation in setOf("spotify_job_start", "spotify_job_resume") || (operation == "spotify_job_pause" && SpotifyImportService.active)) {
+            SpotifyImportService.command(context, operation, args) { response -> callback(id, response) }
+            if (operation != "spotify_job_pause") (context as? MainActivity)?.requestImportNotifications()
+            return
+        }
+        if (operation in setOf("spotify_job_status", "spotify_job_results", "spotify_job_ack", "spotify_job_pause")) {
+            workers.execute {
+                val response = try {
+                    val data = Engine.call(context, operation, JSONObject(args))
+                    if (operation == "spotify_job_status") data.put("serviceActive", SpotifyImportService.active)
+                    JSONObject().put("data", data).toString()
+                } catch (error: Exception) {
+                    JSONObject().put("error", error.message ?: "Could not read the Spotify import.").toString()
+                }
+                callback(id, response)
+            }
+            return
+        }
         if (operation in PhoneDiscovery.operations) {
             phoneDiscovery.request(operation, args) { response -> callback(id, response) }
             return
@@ -163,23 +217,45 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     }
 
     @JavascriptInterface fun getAppIcon(): String = reply { launcherIcons.current() }
+    @JavascriptInterface fun consumeSpotifyImportIntent(): Boolean = (context as? MainActivity)?.consumeImportIntent() ?: false
     @JavascriptInterface fun appVersion(): String = BuildConfig.VERSION_NAME
     @JavascriptInterface fun setAppIcon(id: String): String = reply { launcherIcons.select(id) }
 
-    @JavascriptInterface fun beginImport(): String = reply { FileOutputStream(File(context.filesDir, "spotify-import.tmp")).use { }; true }
-    @JavascriptInterface fun appendImport(chunk: String): String = reply {
+    private val importDirectory = File(context.cacheDir, "spotify-imports")
+    private fun importJob(token: String): File {
+        require(token.matches(Regex("[a-f0-9]{32}")))
+        return File(importDirectory, token)
+    }
+    @JavascriptInterface fun beginImport(): String = reply {
+        val expired = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        importDirectory.listFiles()?.filter { it.lastModified() < expired }?.forEach { it.deleteRecursively() }
+        val token = java.util.UUID.randomUUID().toString().replace("-", "")
+        val job = importJob(token)
+        check(job.mkdirs())
+        check(File(job, "export").createNewFile())
+        token
+    }
+    @JavascriptInterface fun appendImport(token: String, chunk: String): String = reply {
         require(chunk.length <= 64 * 1024)
-        val target = File(context.filesDir, "spotify-import.tmp")
+        val target = File(importJob(token), "export")
+        require(target.isFile)
         val bytes = Base64.decode(chunk, Base64.DEFAULT)
         require(target.length() + bytes.size <= 32 * 1024 * 1024)
         FileOutputStream(target, true).use { it.write(bytes) }
         true
     }
+    @JavascriptInterface fun importPage(token: String, page: Int): String {
+        require(page >= 0)
+        return File(importJob(token), "$page.json").readText()
+    }
+    @JavascriptInterface fun endImport(token: String): String = reply { importJob(token).deleteRecursively() }
     @JavascriptInterface fun spotifyHelp(): String = reply {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.spotify.com/account/privacy/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
     }
 
-    @JavascriptInterface fun loadLibrary(): String = reply {
+    @JavascriptInterface fun loadLibrary(): String = libraryWriter.submit<String> { readLibrary() }.get()
+
+    private fun readLibrary(): String = reply {
         val file = File(context.filesDir, "library.json")
         if (file.exists()) JSONObject(file.readText()).apply {
             val history = context.getSharedPreferences("playlist-playback", Context.MODE_PRIVATE)
@@ -191,12 +267,35 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
             }
         } else null
     }
-    @JavascriptInterface fun saveLibrary(json: String): String = reply {
-        require(json.length <= 64 * 1024 * 1024 && JSONObject(json).getInt("version") == 1)
-        val temporary = File(context.filesDir, "library.json.tmp")
-        FileOutputStream(temporary).use { it.write(json.toByteArray(Charsets.UTF_8)); it.fd.sync() }
-        check(temporary.renameTo(File(context.filesDir, "library.json")))
+    @JavascriptInterface fun saveLibrary(json: String): String = libraryWriter.submit<String> { writeLibrary(json) }.get()
+
+    private fun writeLibrary(json: String): String = reply {
+        require(json.length <= 64 * 1024 * 1024)
+        JsonReader(StringReader(json)).use { reader ->
+            var version = 0
+            reader.beginObject()
+            while (reader.hasNext()) {
+                if (reader.nextName() == "version") version = reader.nextInt() else reader.skipValue()
+            }
+            reader.endObject()
+            require(version == 1 && reader.peek() == JsonToken.END_DOCUMENT)
+        }
+        val temporary = File.createTempFile("library-", ".tmp", context.filesDir)
+        try {
+            FileOutputStream(temporary).use { output ->
+                val writer = output.writer(Charsets.UTF_8).buffered()
+                writer.write(json)
+                writer.flush()
+                output.fd.sync()
+            }
+            check(temporary.renameTo(File(context.filesDir, "library.json")))
+        } finally {
+            temporary.delete()
+        }
         true
+    }
+    @JavascriptInterface fun saveLibraryAsync(id: String, json: String) {
+        libraryWriter.execute { callback(id, writeLibrary(json)) }
     }
     @JavascriptInterface fun hasAudio(id: String, bytes: Int): String = reply {
         val target = file(id)

@@ -8,6 +8,9 @@ export function savedTrackMetadata(track, previous) {
   // YouTube song and video views share an ID. Playing its video must keep a saved song downloadable.
   const keepSong = track.source === 'youtube' && track.kind === 'video' && previous?.source === 'youtube' && previous.kind !== 'video';
   const { queueKey, playlistId, ...metadata } = keepSong ? previous : track;
+  if (previous?.spotifyImportIds || track.spotifyImportIds) {
+    metadata.spotifyImportIds = [...new Set([...(previous?.spotifyImportIds || []), ...(track.spotifyImportIds || [])])];
+  }
   return { ...metadata, spotifyUris: [...new Set([...(previous?.spotifyUris || []), ...(track.spotifyUris || [])])] };
 }
 
@@ -34,17 +37,114 @@ export async function spotifyPlaceholder(record) {
   return { id, title: record.title, artist: record.artist, artists: [{ id: '', name: record.artist }], album: { id: '', title: record.album || '' }, duration: record.duration || 0, artwork: '', source: 'unmatched', importRecord: record };
 }
 
+export function appendSpotifyPreview(state, incoming) {
+  const count = incoming.reduce((total, collection) => total + collection.tracks.length, state.previewCount || 0);
+  if (count > 20000) throw new Error('Import up to 20,000 songs at a time. Split this export into smaller files.');
+  for (const collection of incoming) state.collections.push({ ...collection, selected: true });
+  state.previewCount = count;
+}
+
+export async function prepareSpotifyCollections(library, selected, targetPlaylistId = null) {
+  const known = new Map();
+  for (const track of Object.values(library.tracks)) {
+    if (track.source === 'unmatched') continue;
+    for (const uri of track.spotifyUris || []) known.set(uri, track.id);
+    for (const id of track.spotifyImportIds || []) known.set(id, track.id);
+  }
+  const placeholders = new Map();
+  const liked = new Set();
+  const playlists = [];
+  const previous = library.playlists.filter(playlist => playlist.importedFrom === 'Spotify');
+  const reused = new Map();
+  const additions = new Map();
+  for (const item of selected) {
+    const ids = [];
+    const sourceIds = [];
+    for (let offset = 0; offset < item.tracks.length; offset += 128) {
+      // Bound simultaneous SHA-256 operations for older exports without Spotify URIs.
+      const chunk = item.tracks.slice(offset, offset + 128);
+      const resolved = await Promise.all(chunk.map(async record => {
+        if (known.has(record.uri)) return [record.uri, known.get(record.uri)];
+        const placeholder = await spotifyPlaceholder(record);
+        if (known.has(placeholder.id)) return [placeholder.id, known.get(placeholder.id)];
+        if (!library.tracks[placeholder.id] && !placeholders.has(placeholder.id)) placeholders.set(placeholder.id, placeholder);
+        return [placeholder.id, placeholder.id];
+      }));
+      for (const [sourceId, id] of resolved) {
+        if (!targetPlaylistId && item.kind === 'liked') liked.add(id);
+        else { ids.push(id); sourceIds.push(sourceId); }
+      }
+      if (offset + chunk.length < item.tracks.length) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    if (!targetPlaylistId && item.kind === 'liked') continue;
+    const keyBytes = new TextEncoder().encode(JSON.stringify([item.sourceUrl || '', item.name, sourceIds]));
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', keyBytes));
+    const importKey = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+    if (targetPlaylistId) {
+      additions.set(importKey, { name: item.name, ids });
+      continue;
+    }
+    // Older imports have no fingerprint. Reuse only a complete ordered match
+    // from Spotify, including every duplicate, and consume each playlist once.
+    const existing = previous.find(playlist => !reused.has(playlist.id) &&
+      (playlist.spotifyImportKey ? playlist.spotifyImportKey === importKey :
+        playlist.name === item.name && playlist.trackIds.length === ids.length && ids.every((id, i) => id === playlist.trackIds[i])));
+    if (existing) reused.set(existing.id, importKey);
+    else playlists.push({ id: crypto.randomUUID(), name: item.name, trackIds: ids, importedFrom: 'Spotify', spotifyImportKey: importKey, importedAt: Date.now() });
+  }
+  return { placeholders, liked, playlists, reused, additions };
+}
+
+// Track whole exports by their original ordered Spotify IDs, even after matching
+// replaces those IDs in the playlist or the listener edits the playlist by hand.
+export function appendSpotifyToPlaylist(playlist, additions) {
+  if (!playlist) throw new Error('This playlist is gone.');
+  const imported = new Set(playlist.spotifyAppendKeys || []);
+  const tracks = [];
+  for (const [key, { name, ids }] of additions) {
+    if (imported.has(key) || playlist.spotifyImportKey === key) continue;
+    if (!playlist.spotifyImportKey && playlist.importedFrom === 'Spotify' && playlist.name === name &&
+        playlist.trackIds.length === ids.length && ids.every((id, i) => playlist.trackIds[i] === id)) {
+      playlist.spotifyImportKey = key;
+      continue;
+    }
+    for (const id of ids) tracks.push(id);
+    imported.add(key);
+  }
+  if (tracks.length) {
+    playlist.trackIds = playlist.trackIds.concat(tracks);
+    playlist.spotifyAppendKeys = [...imported];
+  }
+}
+
+export function replaceLibraryTracks(library, candidates) {
+  const replacements = new Map();
+  for (const [oldId, candidate] of candidates) {
+    const original = library.tracks[oldId];
+    // A user can choose a recording manually while an automatic lookup is in flight.
+    if (!original?.importRecord || original.source !== 'unmatched') continue;
+    const existing = library.tracks[candidate.id];
+    const spotifyUris = [...new Set([...(existing?.spotifyUris || []), ...(candidate.spotifyUris || []), original.importRecord.uri].filter(Boolean))];
+    const track = savedTrackMetadata({ ...candidate, spotifyUris }, existing);
+    if (!original.importRecord.uri) track.spotifyImportIds = [...new Set([...(track.spotifyImportIds || []), oldId])];
+    library.tracks[candidate.id] = track;
+    if (oldId !== candidate.id) delete library.tracks[oldId];
+    replacements.set(oldId, candidate.id);
+  }
+  if (replacements.size) {
+    const remap = id => replacements.get(id) || id;
+    library.liked = [...new Set(library.liked.map(remap))];
+    library.recent = [...new Set(library.recent.map(remap))];
+    for (const playlist of library.playlists) {
+      if (playlist.trackIds.some(id => replacements.has(id))) playlist.trackIds = playlist.trackIds.map(remap);
+    }
+  }
+  return replacements;
+}
+
 export function replaceLibraryTrack(library, oldId, candidate) {
-  const original = library.tracks[oldId];
-  const existing = library.tracks[candidate.id] || {};
-  const spotifyUris = [...new Set([...(existing.spotifyUris || []), ...(candidate.spotifyUris || []), original?.importRecord?.uri].filter(Boolean))];
-  const track = { ...candidate, spotifyUris };
-  library.tracks[track.id] = track;
-  if (oldId !== track.id) delete library.tracks[oldId];
-  library.liked = [...new Set(library.liked.map(id => id === oldId ? track.id : id))];
-  library.recent = [...new Set(library.recent.map(id => id === oldId ? track.id : id))];
-  for (const playlist of library.playlists) playlist.trackIds = playlist.trackIds.map(id => id === oldId ? track.id : id);
-  return track;
+  const replacements = replaceLibraryTracks(library, [[oldId, candidate]]);
+  return library.tracks[replacements.get(oldId)];
 }
 
 export function mergePCLibrary(local, incoming, deviceId) {

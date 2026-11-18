@@ -30,7 +30,8 @@ if __name__ == "__main__":
     if engine.exists():
         shutil.rmtree(engine)
     engine.mkdir()
-    for name in ("backend.py", "monochrome.py", "offline.py", "spotify_import.py", "device_sync.py", "requirements.txt"):
+    for name in ("backend.py", "monochrome.py", "offline.py", "spotify_import.py", "spotify_job.py",
+                 "desktop_spotify.py", "desktop_import_notification.py", "device_sync.py", "requirements.txt"):
         shutil.copy2(ROOT / "music" / name, engine / name)
     shutil.copytree(vendor, engine / "vendor", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "ytmusicapi", "ytmusicapi-*.dist-info"))
     shutil.copy2(ROOT / "src-tauri/icons/128x128@2x.png", package / "icon.png")

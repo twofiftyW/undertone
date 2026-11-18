@@ -9,13 +9,22 @@ window.__undertoneReply = (id, reply) => {
   else task.resolve(reply.data);
 };
 
-function request(operation, args = {}) {
+function bridgeRequest(send, timeout = 240000) {
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('This request took too long. Check your connection and retry.')); }, operation === 'link_pull' ? 24 * 60 * 60 * 1000 : operation === 'download_track' ? 620000 : 240000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('This request took too long. Check your connection and retry.')); }, timeout);
     pending.set(id, { resolve, reject, timer });
-    device.request(id, operation, JSON.stringify(args));
+    try { send(id); } catch (error) {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(error);
+    }
   });
+}
+
+function request(operation, args = {}) {
+  const timeout = operation === 'link_pull' ? 24 * 60 * 60 * 1000 : operation === 'download_track' ? 620000 : 240000;
+  return bridgeRequest(id => device.request(id, operation, JSON.stringify(args)), timeout);
 }
 
 function call(method, ...args) {
@@ -28,19 +37,31 @@ async function invoke(command, args, options) {
   if (command === 'get_app_icon') return call('getAppIcon');
   if (command === 'set_app_icon') return call('setAppIcon', args.id);
   if (command === "load_library") return call("loadLibrary");
-  if (command === "save_library") return call("saveLibrary", JSON.stringify(args.library));
+  if (command === "save_library") {
+    const json = typeof args.library === 'string' ? args.library : JSON.stringify(args.library);
+    return bridgeRequest(id => device.saveLibraryAsync(id, json));
+  }
   if (command === "has_audio") return call("hasAudio", args.id, args.bytes);
   if (command === "delete_audio") return call("deleteAudio", args.id);
   if (command === "platform") return "android";
   if (command === 'spotify_help') return call('spotifyHelp');
+  if (['spotify_job_start', 'spotify_job_resume', 'spotify_job_pause', 'spotify_job_status', 'spotify_job_results', 'spotify_job_ack'].includes(command)) return request(command, args);
   if (['music', 'list_downloads', 'offline_file', 'download_track', 'remove_download', 'link_status', 'link_discover', 'link_phone_start', 'link_phone_status', 'link_phone_stop', 'link_pair', 'link_forget', 'link_pull'].includes(command)) return request(command, args);
   if (command === 'parse_spotify') {
-    call('beginImport');
-    for (let offset = 0; offset < args.length; offset += 32768) {
-      call('appendImport', btoa(String.fromCharCode(...args.subarray(offset, offset + 32768))));
-      if (offset % 262144 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+    const file = args instanceof Blob ? args : new Blob([args]);
+    const token = call('beginImport');
+    try {
+      for (let start = 0; start < file.size; start += 262144) {
+        const bytes = new Uint8Array(await file.slice(start, start + 262144).arrayBuffer());
+        for (let offset = 0; offset < bytes.length; offset += 32768) {
+          call('appendImport', token, btoa(String.fromCharCode(...bytes.subarray(offset, offset + 32768))));
+        }
+      }
+      const parsed = await request('parse_spotify', { token, filename: options.headers['x-import-name'] });
+      return await readSpotifyPages(parsed, page => device.importPage(token, page));
+    } finally {
+      call('endImport', token);
     }
-    return request('parse_spotify', { filename: options.headers['x-import-name'] });
   }
   if (command === "save_audio") {
     const id = options.headers["x-audio-id"];
@@ -56,6 +77,41 @@ async function invoke(command, args, options) {
 }
 
 export const nativeRuntime = window.__TAURI__?.core || (device ? { invoke, convertFileSrc: (path) => call("audioURL", path) } : null);
+
+async function readSpotifyPages(parsed, readPage) {
+  for (const collection of parsed.collections) {
+    const { firstPage, pageCount } = collection;
+    delete collection.firstPage;
+    delete collection.pageCount;
+    collection.tracks = [];
+    for (let i = 0; i < pageCount; i++) {
+      collection.tracks.push(...JSON.parse(await readPage(firstPage + i)));
+      if (i % 8 === 7) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  return parsed;
+}
+
+export async function parseSpotifyFile(file) {
+  const filename = encodeURIComponent(file.name);
+  if (device) return nativeRuntime.invoke('parse_spotify', file, { headers: { 'x-import-name': filename } });
+  const token = await nativeRuntime.invoke('begin_spotify_file');
+  try {
+    for (let offset = 0; offset < file.size; offset += 262144) {
+      const bytes = new Uint8Array(await file.slice(offset, offset + 262144).arrayBuffer());
+      await nativeRuntime.invoke('append_spotify_file', bytes, { headers: { 'x-import-job': token } });
+    }
+    const parsed = await nativeRuntime.invoke('finish_spotify_file', { token, filename });
+    return await readSpotifyPages(parsed, page => nativeRuntime.invoke('spotify_file_page', { token, page }));
+  } finally {
+    await nativeRuntime.invoke('end_spotify_file', { token });
+  }
+}
+
+export function spotifyJobRequest(operation, args) {
+  if (device) return request(operation, args);
+  return nativeRuntime.invoke('spotify_job', { operation, args });
+}
 
 export async function musicRequest(operation, args = {}) {
   if (window.__TAURI__?.core) return window.__TAURI__.core.invoke("music", { operation, args });
