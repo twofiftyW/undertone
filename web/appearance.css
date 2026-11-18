@@ -11,6 +11,8 @@
 .appearance-button:hover, .appearance-button:focus-visible { color: var(--accent); }
 
 dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
+.appearance-heading { margin: 0 0 9px; font-size: 13px; font-weight: 650; color: var(--text); }
+.icon-heading { margin-top: 22px; }
 .theme-choices {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -77,6 +79,44 @@ dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
 }
 .theme-label .icon { width: 15px; height: 15px; stroke-width: 2.6; opacity: 0; }
 .theme-choice > input:checked + .theme-card .theme-label .icon { opacity: 1; color: var(--accent); }
+
+.icon-sync {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.icon-sync input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+.icon-sync img { margin-inline-start: auto; }
+.app-icon-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 9px; }
+.app-icon-choices[hidden] { display: none; }
+.icon-card {
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.icon-card img { display: block; }
+.icon-card .icon {
+  display: none;
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 14px;
+  height: 14px;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  stroke-width: 3;
+}
+.icon-choice > input:checked + .icon-card .icon { display: block; }
+.app-icon-error { margin: 10px 0 0; color: var(--text); font-size: 12px; }
+.app-icon-error:empty { display: none; }
 
 @media (max-width: 1050px) {
   .appearance-button { width: 30px; height: 32px; justify-content: center; padding: 0; }

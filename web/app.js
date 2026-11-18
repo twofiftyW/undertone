@@ -1,6 +1,7 @@
 import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
 import { isFileDrag, searchTracks } from "./core.js";
 import { nativeRuntime as native, musicRequest } from "./runtime.js";
+import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { LinuxPlayer } from "./player.js";
 import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
@@ -11,6 +12,7 @@ import { appLanguage, setLanguage, tr, countLabel, translateStatic } from './i18
 const $ = (selector) => document.querySelector(selector);
 const icon = (name, extra = "") => `<svg class="icon ${extra}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const nativeAudio = window.UndertoneAudio;
+await restoreAppIcon();
 const platform = native ? await native.invoke('platform') : 'browser';
 const linuxPlayback = platform === 'linux';
 const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
@@ -517,7 +519,9 @@ async function loadCatalog(force = false) {
   }
 }
 
-function navigationSnapshot() { return { page, query, searchCategory, scroll: window.scrollY }; }
+function navigationSnapshot() {
+  return { page, query, searchCategory, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
+}
 
 function navigate(next, remember = true) {
   if (remember && next !== page) navigationHistory.push(navigationSnapshot());
@@ -546,11 +550,29 @@ function goBack() {
   page = previous.page;
   query = previous.query;
   searchCategory = previous.searchCategory;
+  artistReleaseTab = previous.artistReleaseTab;
+  artistSongLimit = previous.artistSongLimit;
+  releaseFilter = previous.releaseFilter;
+  releaseLimit = previous.releaseLimit;
   $("#search").value = query;
   render();
-  const restore = () => window.scrollTo({ top: previous.scroll });
-  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog().then(restore);
-  else restore();
+  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) {
+    const loaded = loadCatalog();
+    const restoringRequest = requestId;
+    loaded.then(() => {
+      if (requestId === restoringRequest) window.scrollTo({ top: previous.scroll });
+    });
+  } else window.scrollTo({ top: previous.scroll });
+}
+
+if (platform === 'android') {
+  window.undertoneBack = () => {
+    if (dialog.open) closeDialog();
+    else if (!$('#queue-panel').classList.contains('hidden')) actions.queue();
+    else if (document.body.classList.contains('player-expanded')) document.body.classList.remove('player-expanded');
+    else if (queueAddMode) actions['queue-add-done']();
+    else goBack();
+  };
 }
 
 function updatePlayIcons() {
@@ -801,6 +823,7 @@ function dialogTop(title) { return `<div class="dialog-top"><h2 id="dialog-title
 
 function appearanceDialog() {
   const currentTheme = document.documentElement.dataset.theme;
+  const sync = iconSyncEnabled();
   const choices = Object.entries(window.undertoneAppearance.names).map(([id, name]) => `
     <label class="theme-choice">
       <input type="radio" name="theme" value="${id}" ${id === currentTheme ? 'checked autofocus' : ''}>
@@ -811,7 +834,25 @@ function appearanceDialog() {
         <span class="theme-label">${h(tr(name))}${icon('check')}</span>
       </span>
     </label>`).join('');
-  openDialog(`${dialogTop(tr('Appearance'))}<div class="theme-choices" role="radiogroup" aria-labelledby="dialog-title">${choices}</div>`, 'appearance');
+  const icons = Object.entries(iconNames).map(([id, name]) => `
+    <label class="theme-choice icon-choice">
+      <input type="radio" name="app-icon" value="${id}" ${id === document.documentElement.dataset.appIcon ? 'checked' : ''} ${sync ? 'disabled' : ''}>
+      <span class="theme-card icon-card">
+        <img src="${appIconPath(id)}" alt="" width="40" height="40">
+        <span>${h(tr(name))}</span>${icon('check')}
+      </span>
+    </label>`).join('');
+  openDialog(`${dialogTop(tr('Appearance'))}
+    <h3 class="appearance-heading" id="theme-heading">${h(tr('Theme'))}</h3>
+    <div class="theme-choices" role="radiogroup" aria-labelledby="theme-heading">${choices}</div>
+    <h3 class="appearance-heading icon-heading" id="app-icon-heading">${h(tr('App icon'))}</h3>
+    <label class="icon-sync">
+      <input type="checkbox" name="sync-app-icon" aria-controls="app-icon-choices" ${sync ? 'checked' : ''}>
+      <span>${h(tr('Sync with theme'))}</span>
+      <img src="${appIconPath()}" data-app-icon alt="" width="30" height="30">
+    </label>
+    <div class="app-icon-choices" id="app-icon-choices" role="radiogroup" aria-labelledby="app-icon-heading" ${sync ? 'hidden' : ''}>${icons}</div>
+    <p class="app-icon-error" role="alert"></p>`, 'appearance');
 }
 
 function languageDialog() {
@@ -857,7 +898,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><svg width="44" height="44" aria-hidden="true"><use href="#brand-mark"/></svg><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone 0.0.4-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
+  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha 0.0.5-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
 async function metadata(file) {
@@ -1026,7 +1067,7 @@ async function followArtist(id) {
 }
 
 function searchName(name, category = "all") {
-  if (page !== "search") navigationHistory.push(navigationSnapshot());
+  if (page !== "search" || (platform === 'android' && (query !== name || searchCategory !== category))) navigationHistory.push(navigationSnapshot());
   page = "search";
   query = name;
   searchCategory = category;
@@ -1254,14 +1295,24 @@ const actions = {
   back: goBack,
   "focus-search": () => page === "search" ? $("#search").focus() : navigate("search"),
   "search-name": button => searchName(button.dataset.name),
-  "search-filter": button => { searchCategory = button.dataset.filter; if (searchCategory !== "videos" && !searchData.musicLoaded) { loadCatalog(); return; } render(); if (searchCategory === "videos" && !searchData.fallbackLoaded && !videoLoading) loadMoreVideos(); },
+  "search-filter": button => {
+    if (platform === 'android' && searchCategory !== button.dataset.filter) navigationHistory.push(navigationSnapshot());
+    searchCategory = button.dataset.filter;
+    if (searchCategory !== "videos" && !searchData.musicLoaded) { loadCatalog(); return; }
+    render();
+    if (searchCategory === "videos" && !searchData.fallbackLoaded && !videoLoading) loadMoreVideos();
+  },
   "more-videos": () => loadMoreVideos(requestId, true),
   "open-artist": button => navigate(`artist:${button.dataset.id}`),
   "open-album": button => navigate(`album:${button.dataset.id}`),
   "open-discography": button => navigate(`discography:${button.dataset.id}`),
   "play-release": button => playRelease(button.dataset.id),
   "more-artist-songs": () => { artistSongLimit += 10; render(); },
-  "artist-release-filter": button => { artistReleaseTab = button.dataset.filter; render(); },
+  "artist-release-filter": button => {
+    if (platform === 'android' && artistReleaseTab !== button.dataset.filter) navigationHistory.push(navigationSnapshot());
+    artistReleaseTab = button.dataset.filter;
+    render();
+  },
   "release-view": button => { releaseView = button.dataset.mode; render(); },
   "more-releases": () => { releaseLimit += 8; render(); },
   "retry-release": async button => { await ensureAlbum(button.dataset.id, true); render(); },
@@ -1416,7 +1467,24 @@ $("#clear-search").addEventListener("click", () => { clearTimeout(searchTimer); 
 $("#file-input").addEventListener("change", (event) => importFiles(event.target.files));
 $("#spotify-file-input").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (files.length) readSpotifyFiles(files); });
 document.addEventListener("change", (event) => {
-  if (event.target.name === 'theme' && event.target.checked) window.undertoneAppearance.select(event.target.value);
+  let iconChange;
+  if (event.target.name === 'theme' && event.target.checked) {
+    window.undertoneAppearance.select(event.target.value);
+    iconChange = syncIconWithTheme();
+  } else if (event.target.name === 'sync-app-icon') {
+    iconChange = setIconSync(event.target.checked);
+  } else if (event.target.name === 'app-icon' && event.target.checked) {
+    iconChange = selectAppIcon(event.target.value);
+  }
+  if (iconChange) {
+    dialog.querySelector('.app-icon-error').textContent = '';
+    iconChange.catch(() => {
+      const message = tr('Couldn’t change the app icon. Please try again.');
+      const notice = dialog.open && dialog.querySelector('.app-icon-error');
+      if (notice) notice.textContent = message;
+      else toast(message);
+    });
+  }
   if (event.target.dataset.spotifySelected !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifySelected)]; if (item) item.selected = event.target.checked; }
   if (event.target.dataset.spotifyKind !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifyKind)]; if (item && ["playlist", "liked"].includes(event.target.value)) item.kind = event.target.value; }
   if (event.target.id === "sort") { sort = event.target.value; render(); }

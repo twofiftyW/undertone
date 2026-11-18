@@ -17,6 +17,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
@@ -29,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var phoneDiscovery: PhoneDiscovery
     private var chooser: ValueCallback<Array<Uri>>? = null
+    private var unregisterBackCallback: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,8 +86,21 @@ class MainActivity : Activity() {
             }
         }
         setContentView(frame)
+        if (Build.VERSION.SDK_INT >= 33) {
+            val dispatcher = onBackInvokedDispatcher
+            val callback = OnBackInvokedCallback(::navigateBack)
+            dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            unregisterBackCallback = { dispatcher.unregisterOnBackInvokedCallback(callback) }
+        }
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
     }
+
+    private fun navigateBack() {
+        webView.evaluateJavascript("window.undertoneBack?.()", null)
+    }
+
+    @Deprecated("Used by the legacy Android back dispatcher")
+    override fun onBackPressed() = navigateBack()
 
     @Deprecated("Legacy result API remains available on Android 8+")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -97,11 +113,18 @@ class MainActivity : Activity() {
 
     override fun onStart() { super.onStart(); phoneDiscovery.setForeground(true) }
     override fun onStop() { phoneDiscovery.setForeground(false); super.onStop() }
-    override fun onDestroy() { phoneDiscovery.destroy(); chooser?.onReceiveValue(null); webView.destroy(); super.onDestroy() }
+    override fun onDestroy() {
+        unregisterBackCallback?.invoke()
+        phoneDiscovery.destroy()
+        chooser?.onReceiveValue(null)
+        webView.destroy()
+        super.onDestroy()
+    }
 }
 
 class DeviceBridge(private val context: Context, private val callback: (String, String) -> Unit) {
     val phoneDiscovery = PhoneDiscovery(context.applicationContext)
+    private val launcherIcons = LauncherIcons(context)
     private val workers = Executors.newFixedThreadPool(3)
     private val directory = File(context.filesDir, "audio").apply { mkdirs() }
     private fun file(id: String): File {
@@ -138,6 +161,9 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
             callback(id, response)
         }
     }
+
+    @JavascriptInterface fun getAppIcon(): String = reply { launcherIcons.current() }
+    @JavascriptInterface fun setAppIcon(id: String): String = reply { launcherIcons.select(id) }
 
     @JavascriptInterface fun beginImport(): String = reply { FileOutputStream(File(context.filesDir, "spotify-import.tmp")).use { }; true }
     @JavascriptInterface fun appendImport(chunk: String): String = reply {

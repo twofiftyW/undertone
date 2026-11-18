@@ -1,5 +1,4 @@
 <resources>
-    <string name="alpha_app_name">Undertone Альфа</string>
     <string name="playback_previous">Предыдущий трек</string>
     <string name="playback_pause">Пауза</string>
     <string name="playback_play">Воспроизвести</string>

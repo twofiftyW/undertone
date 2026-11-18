@@ -2,5 +2,5 @@
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
     <path android:strokeColor="#18271C" android:strokeWidth="7" android:strokeLineCap="round"
-        android:pathData="M30,48 L30,60 M42,37 L42,71 M54,28 L54,80 M66,41 L66,67 M78,49 L78,59" />
+        android:pathData="@string/launcher_waveform_path" />
 </vector>

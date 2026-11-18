@@ -25,6 +25,8 @@ function call(method, ...args) {
 }
 
 async function invoke(command, args, options) {
+  if (command === 'get_app_icon') return call('getAppIcon');
+  if (command === 'set_app_icon') return call('setAppIcon', args.id);
   if (command === "load_library") return call("loadLibrary");
   if (command === "save_library") return call("saveLibrary", JSON.stringify(args.library));
   if (command === "has_audio") return call("hasAudio", args.id, args.bytes);

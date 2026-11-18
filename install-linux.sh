@@ -26,13 +26,25 @@ trap 'rm -f "$temporary_binary"' EXIT HUP INT TERM
 install -m755 "$package_dir/Undertone" "$temporary_binary"
 mv -f "$temporary_binary" "$app_dir/Undertone"
 install -m644 "$package_dir/icon.png" "$app_dir/icon.png"
+launcher_icon="$app_dir/icon.png"
+icon_profile="${XDG_DATA_HOME:-$HOME/.local/share}/personal.undertone.player"
+if [ -r "$icon_profile/app-icon" ]; then
+    choice=$(cat "$icon_profile/app-icon")
+    case "$choice" in
+        green|blue|amoled|gray)
+            if [ -f "$icon_profile/launcher-icons/$choice.png" ]; then
+                launcher_icon="$icon_profile/launcher-icons/$choice.png"
+            fi
+            ;;
+    esac
+fi
 cat > "$desktop_dir/personal.undertone.player.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Undertone
+Name=Undertone Alpha
 Comment=Your own little corner of music
 Exec="$app_dir/Undertone"
-Icon=$app_dir/icon.png
+Icon=$launcher_icon
 Terminal=false
 Categories=AudioVideo;Audio;Player;
 StartupWMClass=Undertone
@@ -40,4 +52,4 @@ EOF
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
 fi
-printf '%s\n' 'Installed Undertone 0.0.4-alpha. Restart Undertone, or open it from your application launcher.'
+printf '%s\n' 'Installed Undertone Alpha 0.0.5-alpha. Restart Undertone Alpha, or open it from your application launcher.'

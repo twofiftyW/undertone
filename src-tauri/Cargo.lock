@@ -4055,7 +4055,7 @@ dependencies = [
 
 [[package]]
 name = "undertone"
-version = "0.0.4-alpha"
+version = "0.0.5-alpha"
 dependencies = [
  "libc",
  "serde",
@@ -4065,6 +4065,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tokio",
+ "windows",
 ]
 
 [[package]]

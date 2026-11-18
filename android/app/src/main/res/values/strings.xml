@@ -1,5 +1,5 @@
 <resources>
-    <string name="alpha_app_name">Undertone Alpha</string>
+    <string name="app_name" translatable="false">Undertone Alpha</string>
     <string name="playback_previous">Previous</string>
     <string name="playback_pause">Pause</string>
     <string name="playback_play">Play</string>

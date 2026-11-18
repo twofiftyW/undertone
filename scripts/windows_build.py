@@ -50,7 +50,7 @@ def package(runtime, vendor):
         shutil.copytree(vendor, music / "vendor", ignore=shutil.ignore_patterns("__pycache__", "bin"))
         shutil.copy2(vendor / "bin/deno.exe", music / "python/deno.exe")
         (folder / "Start here.txt").write_text("Extract the entire Undertone folder. Open Undertone.exe.\n"
-            "Undertone requires 64-bit Windows 10 or newer and the Microsoft Edge WebView2 Runtime.\n"
+            "Undertone Alpha requires 64-bit Windows 10 or newer and the Microsoft Edge WebView2 Runtime.\n"
             "Get WebView2 at https://developer.microsoft.com/microsoft-edge/webview2/ if Windows asks.\n",
             encoding="utf-8")
         shutil.make_archive(str(output.with_suffix('')), 'zip', temporary, 'Undertone')

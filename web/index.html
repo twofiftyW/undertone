@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#111413">
   <meta name="color-scheme" content="dark">
   <meta name="description" content="Your own little corner of music. A private, ad-free player.">
-  <title>Undertone</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <title>Undertone Alpha</title>
+  <link rel="icon" href="./icons/green.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./app.css">
   <link rel="stylesheet" href="./catalog.css">
   <link rel="stylesheet" href="./appearance.css">
@@ -16,7 +16,6 @@
 </head>
 <body>
   <svg class="icon-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
-    <symbol id="brand-mark" viewBox="0 0 256 256"><rect width="256" height="256" rx="62" fill="var(--accent)"/><g fill="var(--on-accent, #18271c)"><rect x="49" y="99" width="22" height="58" rx="11"/><rect x="83" y="66" width="22" height="124" rx="11"/><rect x="117" y="42" width="22" height="172" rx="11"/><rect x="151" y="78" width="22" height="100" rx="11"/><rect x="185" y="104" width="22" height="48" rx="11"/></g></symbol>
     <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1.4-3.4 1.5 1.5 0 0 1 1.1-2.6h2.4a3.1 3.1 0 0 0 3.1-3A9 9 0 0 0 12 3Z"/><g fill="currentColor" stroke="none"><circle cx="7.5" cy="11" r="1.2"/><circle cx="10" cy="7.8" r="1.2"/><circle cx="14" cy="7.8" r="1.2"/><circle cx="16.6" cy="10.8" r="1.2"/></g></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="7.3"/><path d="m16.2 16.2 4.3 4.3"/></symbol>
@@ -54,7 +53,7 @@
   </defs></svg>
 
   <aside class="sidebar" aria-label="Main navigation" data-i18n-aria-label="Main navigation">
-    <a href="#discover" class="brand" aria-label="Undertone home" data-i18n-aria-label="Undertone home"><svg width="34" height="34" aria-hidden="true"><use href="#brand-mark"/></svg><span>undertone<span class="brand-dot">.</span></span></a>
+    <a href="#discover" class="brand" aria-label="Undertone Alpha home" data-i18n-aria-label="Undertone Alpha home"><img data-app-icon src="./icons/green.svg" width="34" height="34" alt=""><span>undertone<span class="brand-dot">.</span></span></a>
     <div class="nav-label" data-i18n="YOUR EVERYDAY ESCAPE">YOUR EVERYDAY ESCAPE</div>
     <nav class="main-nav">
       <button class="nav-item active" data-view="discover"><svg class="icon"><use href="#i-home"/></svg><span data-i18n="Discover">Discover</span><span class="nav-dot"></span></button>
@@ -69,12 +68,12 @@
     <div class="playlist-label"><span data-i18n="YOUR PLAYLISTS">YOUR PLAYLISTS</span><button class="icon-btn" data-action="create-playlist" aria-label="Create playlist" data-i18n-aria-label="Create playlist"><svg class="icon"><use href="#i-plus"/></svg></button></div>
     <div class="playlist-nav" id="playlist-nav"></div>
     <button class="new-playlist" data-action="create-playlist"><span class="dashed-plus">+</span><span data-i18n="Create a playlist">Create a playlist</span></button>
-    <div class="sidebar-bottom"><div class="private-dot"></div><div><strong data-i18n="A space of your own">A space of your own</strong><span data-i18n="Personal. Always ad-free.">Personal. Always ad-free.</span></div><button class="icon-btn" data-action="about" aria-label="About Undertone" data-i18n-aria-label="About Undertone"><svg class="icon"><use href="#i-more"/></svg></button></div>
+    <div class="sidebar-bottom"><div class="private-dot"></div><div><strong data-i18n="A space of your own">A space of your own</strong><span data-i18n="Personal. Always ad-free.">Personal. Always ad-free.</span></div><button class="icon-btn" data-action="about" aria-label="About Undertone Alpha" data-i18n-aria-label="About Undertone Alpha"><svg class="icon"><use href="#i-more"/></svg></button></div>
   </aside>
 
   <main id="main">
     <header class="topbar">
-      <div class="mobile-brand"><svg width="28" height="28" aria-hidden="true"><use href="#brand-mark"/></svg><strong>undertone.</strong></div>
+      <div class="mobile-brand"><img data-app-icon src="./icons/green.svg" width="28" height="28" alt=""><strong>undertone.</strong></div>
       <button class="icon-btn navigate-back" id="navigate-back" data-action="back" aria-label="Go back" data-i18n-aria-label="Go back" disabled><svg class="icon"><use href="#i-back"/></svg></button>
       <form class="search-box" id="search-form" role="search"><svg class="icon"><use href="#i-search"/></svg><input id="search" aria-label="Search music" data-i18n-aria-label="Search music" placeholder="What do you want to listen to?" data-i18n-placeholder="What do you want to listen to?" maxlength="300" autocomplete="off" spellcheck="false"><kbd>/</kbd><button type="button" class="icon-btn hidden" id="clear-search" aria-label="Clear search" data-i18n-aria-label="Clear search"><svg class="icon"><use href="#i-close"/></svg></button></form>
       <div class="topbar-actions"><button class="import-top" data-action="import"><svg class="icon"><use href="#i-upload"/></svg><span data-i18n="Import music">Import music</span></button><button class="appearance-button" data-action="appearance" aria-haspopup="dialog" aria-label="Appearance" data-i18n-aria-label="Appearance" title="Appearance" data-i18n-title="Appearance"><svg class="icon" aria-hidden="true"><use href="#i-palette"/></svg><span data-i18n="Appearance">Appearance</span></button><button class="language-button" data-action="language" data-i18n="Language">Language</button><button class="avatar" data-action="about" aria-label="Your personal app" data-i18n-aria-label="Your personal app">Y</button></div>

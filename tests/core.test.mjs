@@ -459,6 +459,71 @@ test('a metadata-only PC import can be filled on Android and is skipped once its
   assert.equal(refreshed.tracks[id].nativePath, track.nativePath);
 });
 
+test('app icons follow the theme by default and restore a separate manual choice across restarts', async (t) => {
+  const dataset = { theme: 'amoled' };
+  const preferences = new Map([['undertone-theme', 'amoled'], ['undertone-app-icon', 'green']]);
+  let nativeIcon = 'blue';
+  const bridge = {
+    getAppIcon: () => JSON.stringify({ data: nativeIcon }),
+    setAppIcon(id) {
+      if (id === 'green') return JSON.stringify({ error: 'Launcher unavailable' });
+      nativeIcon = id;
+      return JSON.stringify({ data: id });
+    },
+  };
+  const favicon = { setAttribute(key, value) { this[key] = value; } };
+  const globals = {
+    window: { UndertoneDevice: bridge },
+    document: { documentElement: { dataset }, querySelector: selector => selector.startsWith('link') ? favicon : null,
+      getElementById: () => null, querySelectorAll: () => [] },
+    localStorage: { getItem: key => preferences.get(key), setItem: (key, value) => preferences.set(key, value) },
+  };
+  for (const [name, value] of Object.entries(globals)) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { value, configurable: true });
+    t.after(() => {
+      if (original) Object.defineProperty(globalThis, name, original);
+      else delete globalThis[name];
+    });
+  }
+  const { restoreAppIcon, selectAppIcon, setIconSync, iconSyncEnabled, syncIconWithTheme } = await import('../web/app-icon.js');
+  await restoreAppIcon();
+  assert.equal(iconSyncEnabled(), true);
+  assert.equal(nativeIcon, 'amoled');
+  assert.equal(dataset.appIcon, 'amoled');
+  await setIconSync(false);
+  // Existing users can recover their pre-sync launcher choice.
+  assert.equal(dataset.appIcon, 'blue');
+  await assert.rejects(selectAppIcon('green'), /Launcher unavailable/);
+  assert.equal(dataset.appIcon, 'blue');
+  await selectAppIcon('gray');
+  assert.deepEqual(dataset, { theme: 'amoled', appIcon: 'gray' });
+  assert.equal(preferences.get('undertone-theme'), 'amoled');
+  assert.equal(preferences.get('undertone-app-icon'), nativeIcon);
+  assert.equal(favicon.href, './icons/gray.svg');
+  dataset.theme = 'blue';
+  await syncIconWithTheme();
+  await restoreAppIcon();
+  assert.equal(iconSyncEnabled(), false);
+  assert.equal(nativeIcon, 'gray');
+  await setIconSync(true);
+  assert.equal(nativeIcon, 'blue');
+  dataset.theme = 'amoled';
+  await syncIconWithTheme();
+  assert.equal(nativeIcon, 'amoled');
+  await Promise.all([setIconSync(false), setIconSync(true), setIconSync(false)]);
+  assert.equal(nativeIcon, 'gray');
+  assert.equal(dataset.appIcon, 'gray');
+  preferences.clear();
+  nativeIcon = 'green';
+  dataset.theme = 'blue';
+  await restoreAppIcon();
+  assert.equal(iconSyncEnabled(), true);
+  assert.equal(nativeIcon, 'blue');
+  await setIconSync(false);
+  assert.equal(nativeIcon, 'blue');
+});
+
 test('Android requests return asynchronously, carry provider arguments, and expose engine errors', async () => {
   const originalWindow = globalThis.window;
   globalThis.window = { UndertoneDevice: { request(id, operation, args) {

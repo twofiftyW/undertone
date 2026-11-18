@@ -1,6 +1,8 @@
 use std::{fs, path::PathBuf};
 use tauri::{ipc::InvokeBody, Manager};
 mod music;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod app_icon;
 #[cfg(target_os = "linux")]
 mod playback;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -66,6 +68,8 @@ fn save_library(app: tauri::AppHandle, library: serde_json::Value) -> Result<(),
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.manage(app_icon::AppIcons::default());
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         if let Some(window) = app.get_webview_window("main") {
@@ -79,13 +83,18 @@ pub fn run() {
         .manage(playback::Playback::default())
         .manage(link::Link::default())
         .setup(|app| {
+            app_icon::restore(app.handle());
             app.state::<playback::Playback>().0.lock().map_err(|_| "The audio player is unavailable")?.start()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, playback::playback, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_firewall, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
+        .invoke_handler(tauri::generate_handler![app_icon::get_app_icon, app_icon::set_app_icon, save_audio, delete_audio, platform, load_library, save_library, music::music, playback::playback, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_firewall, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
     #[cfg(target_os = "windows")]
     let builder = builder.manage(link::Link::default())
-        .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
+        .setup(|app| { app_icon::restore(app.handle()); Ok(()) })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) { app_icon::clear_window_properties(window); }
+        })
+        .invoke_handler(tauri::generate_handler![app_icon::get_app_icon, app_icon::set_app_icon, save_audio, delete_audio, platform, load_library, save_library, music::music, downloads::offline_file, downloads::list_downloads, downloads::download_track, downloads::remove_download, downloads::parse_spotify, downloads::spotify_help, link::link_start, link::link_status, link::link_stop, link::link_revoke, link::link_discover_phones, link::link_invite_phone]);
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let builder = builder
         .invoke_handler(tauri::generate_handler![save_audio, delete_audio, platform, load_library, save_library, music::music])

@@ -1,4 +1,4 @@
-"""Build Undertone Alpha with the existing release signing identity."""
+"""Build Undertone Alpha with the original Undertone signing identity."""
 import hashlib
 import json
 import os
@@ -11,8 +11,8 @@ import zipfile
 from bootstrap import ROOT, TOOLS
 from android_setup import android_environment, download
 
-# SHA-256 of the public signer certificate used by the first Alpha release.
-ALPHA_CERTIFICATE = "46ae5a1d16f8aef1a67ae2e758e6864dcaf967bfb85a282f4211c09aa4c38f74"
+# Signer of the published v0.0.1-alpha APK (personal.undertone.player).
+ORIGINAL_CERTIFICATE = "ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb"
 
 if __name__ == "__main__":
     version = "8.13"
@@ -31,14 +31,17 @@ if __name__ == "__main__":
         print("Gradle is ready.")
         raise SystemExit(0)
     env = android_environment()
-    keystore = Path(os.environ.get("UNDERTONE_ALPHA_KEYSTORE") or ROOT / ".private/undertone-alpha.p12")
+    keystore = Path(os.environ.get("UNDERTONE_KEYSTORE") or ROOT / ".private/android-signing.p12")
+    password_file = ROOT / ".private/android-signing-password"
+    if not env.get("UNDERTONE_SIGNING_PASSWORD") and password_file.is_file():
+        env["UNDERTONE_SIGNING_PASSWORD"] = password_file.read_text(encoding="utf-8-sig").rstrip("\r\n")
     if not keystore.is_file() or not env.get("UNDERTONE_SIGNING_PASSWORD"):
-        raise SystemExit("Set UNDERTONE_ALPHA_KEYSTORE to the existing Alpha keystore and UNDERTONE_SIGNING_PASSWORD to its password.")
-    alias = "undertone-alpha"
+        raise SystemExit("Provide .private/android-signing.p12 and .private/android-signing-password, or set UNDERTONE_KEYSTORE and UNDERTONE_SIGNING_PASSWORD.")
+    alias = env.get("UNDERTONE_KEY_ALIAS") or "undertone"
     certificate = subprocess.check_output([str(TOOLS / "jdk-21/bin/keytool"), "-exportcert",
         "-keystore", str(keystore), "-alias", alias, "-storepass:env", "UNDERTONE_SIGNING_PASSWORD"], env=env)
-    if hashlib.sha256(certificate).hexdigest() != ALPHA_CERTIFICATE:
-        raise SystemExit("The supplied signing certificate does not match the published Undertone Alpha app.")
+    if hashlib.sha256(certificate).hexdigest() != ORIGINAL_CERTIFICATE:
+        raise SystemExit(f"The selected key must have certificate SHA-256 {ORIGINAL_CERTIFICATE}.")
     subprocess.run([str(gradle / "bin/gradle"), "--no-daemon", "-p", str(ROOT / "android"), "assembleRelease", "lintRelease"], env=env, check=True)
     build_tools = TOOLS / "android-sdk/build-tools/35.0.0"
     unsigned = ROOT / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
@@ -49,10 +52,15 @@ if __name__ == "__main__":
         aligned = Path(stage) / "aligned.apk"
         signed = Path(stage) / "signed.apk"
         subprocess.run([str(build_tools / "zipalign"), "-P", "16", "-f", "4", str(unsigned), str(aligned)], env=env, check=True)
+        key_password = "UNDERTONE_KEY_PASSWORD" if env.get("UNDERTONE_KEY_PASSWORD") else "UNDERTONE_SIGNING_PASSWORD"
         subprocess.run([str(build_tools / "apksigner"), "sign", "--ks", str(keystore), "--ks-key-alias", alias,
-            "--ks-pass", "env:UNDERTONE_SIGNING_PASSWORD", "--key-pass", "env:UNDERTONE_SIGNING_PASSWORD",
+            "--ks-pass", "env:UNDERTONE_SIGNING_PASSWORD", "--key-pass", f"env:{key_password}",
             "--v4-signing-enabled", "false", "--out", str(signed), str(aligned)], env=env, check=True)
-        subprocess.run([str(build_tools / "apksigner"), "verify", "--verbose", str(signed)], env=env, check=True)
+        verification = subprocess.check_output([str(build_tools / "apksigner"), "verify", "--verbose", "--print-certs", str(signed)], env=env, text=True)
+        signers = [line.split(": ", 1)[1].strip().lower() for line in verification.splitlines()
+                   if line.startswith("Signer #") and " certificate SHA-256 digest: " in line]
+        if signers != [ORIGINAL_CERTIFICATE]:
+            raise SystemExit("The signed APK did not verify with exactly the original Undertone certificate.")
         subprocess.run([str(build_tools / "zipalign"), "-c", "-P", "16", "4", str(signed)], env=env, check=True)
         signed.replace(output)
     print(f"Built signed APK: {output}")
