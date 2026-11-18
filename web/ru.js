@@ -96,6 +96,7 @@ export const russian = {
   "Choose audio files such as MP3, FLAC, WAV, or M4A.": "Выберите аудиофайлы, например MP3, FLAC, WAV или M4A.",
   "Choose export files": "Выбрать файлы экспорта",
   "Choose files smaller than 32 MB, or select individual playlist exports.": "Выберите файлы меньше 32 МБ или экспортируйте плейлисты отдельно.",
+  "Import up to 20,000 songs at a time. Split this export into smaller files.": "За один раз можно импортировать до 20 000 треков. Выберите меньше файлов или разделите большой экспорт на части.",
   "Choose recording": "Выбрать запись",
   "Choose recording for": "Выбрать запись для",
   "Choose recordings for the unmatched songs first. Other songs are already saved or queued.": "Выберите записи для ненайденных треков. Остальные уже сохранены или стоят в очереди.",
@@ -500,6 +501,9 @@ export const russian = {
   "This recording is unavailable. Check your connection and retry.": "Запись недоступна. Проверьте подключение и попробуйте снова.",
   "No clear recording match. Choose a recording manually.": "Точное совпадение не найдено. Выберите запись вручную.",
   "Reading your export files…": "Читаем файлы экспорта…",
+  "Resume matching": "Продолжить поиск совпадений",
+  "Your Spotify collections are saved. Continue matching without choosing the export again.": "Коллекции Spotify сохранены. Можно продолжить поиск совпадений, не выбирая файл повторно.",
+  "Incomplete catalog response.": "Каталог вернул неполный ответ.",
   "Could not access app storage. Check free space and restart the app.": "Не удалось открыть хранилище. Проверьте свободное место и перезапустите приложение.",
   "Already in your library: {count}": "Уже в медиатеке: {count}",
   "Could not import: {count}": "Не удалось импортировать: {count}"

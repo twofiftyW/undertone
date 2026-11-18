@@ -1,9 +1,11 @@
-"""Offline catalog checks: no network requests or access to the private library."""
+"""Local catalog checks without external network or private library access."""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
+import threading
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'music'))
-from backend import cached, dispatch, track as video_track
-from monochrome import track, release, artist_card, identifier, unique
+from backend import cached, dispatch, track as video_track, youtube_search
+from monochrome import track, release, artist_card, identifier, request, unique
 
 person = {'id': 'mono:artist:152942198986379264', 'name': 'DVRST'}
 album = release({'releaseId': '304193265622626304', 'title': 'Echoes of Childhood II', 'releaseType': 'ALBUM', 'releaseDate': '2026-04-17T00:00:00.000Z'}, [person])
@@ -87,3 +89,62 @@ with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)),
     recovered = match_import()
     assert recovered['track'] == youtube_song and not recovered.get('error')
 print('Spotify retries incomplete catalog lookups and caches completed matches and misses.')
+
+# Bulk calls preserve positional results and avoid sending unused candidate
+# metadata across the Android bridge. The manual lookup still gets the list.
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+     patch('backend.match_recording', return_value={'track': normalized, 'candidates': [normalized]}) as lookup:
+    bulk = dispatch('match', {'tracks': [seed, seed], 'includeCandidates': False})['matches']
+    assert bulk == [{'track': normalized}] * 2 and lookup.call_count == 1
+    for i in range(230):
+        dispatch('match', {'tracks': [{'title': 'Other ' + str(i), 'artist': 'Test'}]})
+    assert match_import()['candidates'] == [normalized] and lookup.call_count == 231
+
+with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+     patch('backend.youtube_info', return_value={'entries': [
+         {'id': 'abcdefghijk', 'title': 'Song', 'channel': 'Artist - Topic', 'duration': 120},
+         {'id': 'abcdefghijl', 'title': 'Song', 'duration': 120},
+     ]}), patch('requests.get') as oembed:
+    oembed.return_value.json.return_value = {'title': 'Song', 'author_name': 'Other Artist'}
+    fallback = youtube_search('Artist Song', [], 'song', report_errors=True)
+    assert [t['artist'] for t in fallback] == ['Artist', 'Other Artist']
+    assert oembed.call_count == 1
+
+# Cold matches in consecutive batches reuse at most two catalog connections.
+# The catalog sets a cookie on every response. Later queries must never send it.
+class CatalogHandler(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
+    def do_GET(self):
+        self.server.received.append((self.client_address[1], self.headers.get('Cookie')))
+        self.send_response(200)
+        self.send_header('Content-Length', '2')
+        self.send_header('Set-Cookie', 'catalog=abc; Path=/')
+        self.end_headers()
+        self.wfile.write(b'{}')
+
+    def log_message(self, *args):
+        pass
+
+def lookup_local(seed):
+    request('/search', q=seed['title'])
+    return {'track': {'title': seed['title']}}
+
+with ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler) as server:
+    server.received = []
+    serving = threading.Thread(target=server.serve_forever)
+    serving.start()
+    try:
+        with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
+             patch('backend.monochrome.BASE', f'http://127.0.0.1:{server.server_port}'), \
+             patch.dict('os.environ', {'NO_PROXY': '127.0.0.1'}), \
+             patch('backend.match_recording', side_effect=lookup_local):
+            for i in range(3):
+                inputs = [{'title': str(index)} for index in range(4 * i, 4 * i + 4)]
+                assert [r['track'] for r in dispatch('match', {'tracks': inputs})['matches']] == inputs
+        assert len(server.received) == 12
+        assert len({port for port, _ in server.received}) <= 2
+        assert all(cookie is None for _, cookie in server.received)
+    finally:
+        server.shutdown()
+        serving.join()

@@ -20,36 +20,48 @@ import monochrome
 
 VIDEO = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 CACHE = Path(os.environ.get("UNDERTONE_CACHE_DIR", Path.home() / ".cache/undertone/catalog"))
+MATCH_WORKERS = concurrent.futures.ThreadPoolExecutor(max_workers=2, initializer=monochrome.initialize_match_worker)
 
 
 def cached(kind, args, fetch, ttl=3600, force=False):
-    CACHE.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps([kind, args], sort_keys=True).encode()).hexdigest()
-    path = CACHE / (key + ".json")
-    if not force and path.exists() and time.time() - path.stat().st_mtime < ttl:
-        try:
-            return json.loads(path.read_text())
-        except (OSError, ValueError):
-            pass
+    directory = CACHE
+    limit = 200
+    if kind == 'recording-match-v3':
+        # A single supported Spotify export can contain 20,000 distinct recordings.
+        # Keep their results apart from the small browse cache and prune one bucket at a time.
+        directory = CACHE / 'recordings' / key[:2]
+        limit = 100
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (key + ".json")
+    if not force:
+        # Reuse unexpired match entries written by older versions in the root cache.
+        candidates = (path,) if directory == CACHE else (path, CACHE / path.name)
+        for candidate in candidates:
+            try:
+                if time.time() - candidate.stat().st_mtime < ttl:
+                    return json.loads(candidate.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                pass
     result = fetch()
     if isinstance(result, dict) and result.get('error'):
         return result
-    with tempfile.NamedTemporaryFile(mode='w', dir=CACHE, suffix='.tmp', delete=False, encoding='utf-8') as output:
+    with tempfile.NamedTemporaryFile(mode='w', dir=directory, suffix='.tmp', delete=False, encoding='utf-8') as output:
         temporary = Path(output.name)
         output.write(json.dumps(result, ensure_ascii=False))
     try:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-    files = list(CACHE.glob("*.json"))
-    if len(files) > 220:
+    files = list(directory.glob("*.json"))
+    if len(files) > limit + 20:
         dated = []
         for item in files:
             try:
                 dated.append((item.stat().st_mtime, item))
             except OSError:
                 pass
-        for _, old in sorted(dated)[:-200]:
+        for _, old in sorted(dated)[:-limit]:
             old.unlink(missing_ok=True)
     return result
 
@@ -153,6 +165,10 @@ def youtube_search(query, canonical_artists, kind='video', *, report_errors=Fals
         ident = str(item.get("id") or "")
         if not VIDEO.fullmatch(ident):
             return item
+        # Spotify matching already has YouTube's title and channel on complete
+        # flat search results. Fetch oEmbed only when a credit needs filling in.
+        if kind == 'song' and report_errors and item.get('title') and item.get('channel'):
+            return item
         def fetch():
             import requests
             response = requests.get("https://www.youtube.com/oembed", params={"url": "https://www.youtube.com/watch?v=" + ident, "format": "json"}, timeout=(5, 10))
@@ -240,8 +256,14 @@ def dispatch(operation, args):
                 return cached("recording-match-v3", seed, lambda: match_recording(seed), 43200, force)
             except ValueError as error:
                 return {"track": None, "candidates": [], "reason": str(error), "error": True}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            return {"matches": list(pool.map(find, seeds))}
+        unique = {json.dumps(seed, sort_keys=True): seed for seed in seeds}
+        by_seed = dict(zip(unique, MATCH_WORKERS.map(find, unique.values())))
+        matches = [by_seed[json.dumps(seed, sort_keys=True)] for seed in seeds]
+        if args.get('includeCandidates') is False:
+            # The background importer only needs the selected track or the reason
+            # for a miss. Keep full candidates cached for manual selection.
+            matches = [{key: value for key, value in result.items() if key != 'candidates'} for result in matches]
+        return {"matches": matches}
     if operation == "search":
         if not query:
             return {"tracks": [], "artists": [], "albums": []}

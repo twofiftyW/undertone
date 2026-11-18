@@ -26,6 +26,27 @@ with tempfile.TemporaryDirectory() as folder:
         out.writestr('MyData/Identity.json','unrelated private data must not be parsed')
     assert len(spotify_import.parse(archive,archive.name)['collections'])==2
 
+    # Read CSV rows directly from a compressed member. Keep duplicates, track
+    # order and the ignored-row count, including across BOM/header variants.
+    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as out:
+        rows = ['Track Name;Artist Name(s);Duration (ms)']
+        rows += [f'Song {index};Artist;90000' for index in range(2200)]
+        rows.extend(['Song 0;Artist;90000', ';Missing title;90000'])
+        out.writestr('Liked Songs.csv', ('\r\n'.join(rows)).encode('utf-16'))
+        out.write(path, 'Playlists.json')
+    imported = spotify_import.parse(archive, archive.name)
+    assert imported['total'] == 2202
+    liked = imported['collections'][0]
+    assert [t['title'] for t in liked['tracks']] == [f'Song {i}' for i in range(2200)] + ['Song 0']
+    assert liked['ignored'] == 1 and liked['kind'] == 'liked'
+    with patch.object(spotify_import, 'MAX_TRACKS', 2201):
+        try:
+            spotify_import.parse(archive, archive.name)
+        except ValueError as error:
+            assert '20,000 songs' in str(error)
+        else:
+            raise AssertionError('The song limit must apply to the entire archive')
+
     good={'id':'monochrome:159277913216937984','remoteId':'159277913216937984','source':'monochrome','title':'Close Eyes','artist':'DVRST','artists':[{'id':'mono:artist:152942198986379264','name':'DVRST'}],'duration':132,'album':{'title':'Close Eyes'},'isrc':'TEST12345678'}
     remix={**good,'id':'other','title':'Close Eyes (Slowed + Reverb)','duration':145}
     wrong_artist={**good,'id':'another','artist':'Someone else','artists':[{'name':'Someone else'}]}

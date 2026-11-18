@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.6-alpha** runs on Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A private music player for Linux, Windows, and Android. The Android build is **0.0.7-alpha** and supports Android 8+ on arm64-v8a and x86_64. The Linux x86_64 and Windows 10/11 x64 builds are **0.0.6-alpha**.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone Alpha from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Undertone Alpha 0.0.6 updates 0.0.5-alpha in place using the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **Android:** Install Undertone Alpha 0.0.7-alpha over 0.0.6-alpha to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
 
 Large collections keep their full scroll range on all three platforms. The app renders the visible tracks and nearby rows as you scroll.
 
@@ -43,7 +43,7 @@ Choose **Import Spotify** in the sidebar or Your library.
 3. Choose **Import selected collections**. Existing playlists are preserved. Normal playlists are added as new collections, while liked songs merge into Undertone’s Liked Songs.
 4. Recordings are matched against Monochrome using titles, artists, versions, and available duration/ISRC information, then YouTube if no clear match is found. Unclear matches stay as visible entries with **Choose recording**. Select a candidate to replace that entry throughout its playlists and Liked Songs.
 
-Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. **Pause matching** stops after the current batch; **Match remaining songs** resumes work. You can close the dialog and listen while matching continues.
+Playlist positions and repeated entries are retained. Existing liked-song membership is preserved and deduplicated when matches resolve to the same recording. Spotify identifiers are kept as metadata. You can close the dialog and listen while matching continues. **Pause matching** stops after the current batch. On Android 0.0.7-alpha, reopen **Import Spotify** and choose **Resume matching** to continue from saved progress after a pause or restart.
 
 Export files are parsed on this device. Only song metadata needed for matching is looked up in the music catalog. ZIP files are read without extracting their contents; unrelated account-data JSON files are skipped. Supported limits are 32 MB per uploaded file, 100 MB of relevant expanded ZIP contents, and 20,000 song entries per import.
 

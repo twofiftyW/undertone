@@ -5,12 +5,14 @@ from pathlib import Path
 import re
 
 ROOT = None
+IMPORTS = None
 OPERATIONS = {'search', 'fallback', 'videos', 'artist', 'discography', 'album', 'recommendations', 'resolve', 'home', 'match', 'spotify_url'}
 
 
 def configure(files, cache):
-    global ROOT
+    global ROOT, IMPORTS
     ROOT = Path(files).resolve()
+    IMPORTS = Path(cache) / 'spotify-imports'
     os.environ['UNDERTONE_CACHE_DIR'] = str(Path(cache) / 'music')
     os.environ['UNDERTONE_DOWNLOAD_DIR'] = str(ROOT / 'downloads')
     return True
@@ -67,9 +69,24 @@ def dispatch(operation, args):
             return {'url': saved['nativePath'], 'offline': True}
         return backend.dispatch('resolve', {'id': track.get('remoteId'), 'source': track.get('source'), 'track': track})
     if operation == 'parse_spotify':
-        path = ROOT / 'spotify-import.tmp'
+        token = args.get('token', '')
+        if not re.fullmatch(r'[a-f0-9]{32}', token):
+            raise ValueError('Invalid Spotify import session')
+        directory = IMPORTS / token
+        path = directory / 'export'
         try:
-            return backend.dispatch('spotify_parse', {'path': str(path), 'filename': args.get('filename')})
+            result = backend.dispatch('spotify_parse', {'path': str(path), 'filename': args.get('filename')})
+            # WebView callbacks should contain only the preview, not a multi-MB script.
+            page = 0
+            for collection in result['collections']:
+                records = collection.pop('tracks')
+                collection['firstPage'] = page
+                for start in range(0, len(records), 32):
+                    with (directory / f'{page}.json').open('w', encoding='utf-8') as stream:
+                        json.dump(records[start:start + 32], stream, ensure_ascii=False, separators=(',', ':'))
+                    page += 1
+                collection['pageCount'] = page - collection['firstPage']
+            return result
         finally:
             path.unlink(missing_ok=True)
     if operation == 'link_discover':

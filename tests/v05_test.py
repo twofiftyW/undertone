@@ -97,3 +97,44 @@ with tempfile.TemporaryDirectory() as folder:
         server.shutdown(); server.server_close(); thread.join(timeout=5)
 assert device_sync.lan_address('192.168.1.2') and not device_sync.lan_address('8.8.8.8') and not device_sync.lan_address('0.0.0.0')
 print('Pinned-TLS pairing, access control, playlist order, audio checksums, repeat-copy skips, offline Android resolution, and unsafe/interrupted-copy rejection passed.')
+
+with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ):
+    cache = Path(folder) / 'cache'
+    android_bridge.configure(folder, str(cache))
+    token = '6c' * 16
+    job = cache / 'spotify-imports' / token
+    job.mkdir(parents=True)
+    source = job / 'export'
+
+    def parse_export(job_token):
+        payload = {'token': job_token, 'filename': 'Spotify%20playlists.json'}
+        return json.loads(android_bridge.handle('parse_spotify', json.dumps(payload)))
+
+    tracks = [{'title': f'Song {i}', 'artist': 'Björk', 'album': 'Álbum', 'duration': 132,
+               'uri': f'spotify:track:{i:022d}', 'isrc': f'ISRC{i}'} for i in range(2048)]
+    collections = [tracks + [tracks[0]], tracks[32:64]]
+    export = {'playlists': [{'name': 'Large', 'items': collections[0]},
+                            {'name': 'Again', 'items': [{'episode': {}}, *collections[1]]}]}
+    source.write_text(json.dumps(export), encoding='utf-8')
+    for invalid in ('', '../' + token, token + '0'):
+        assert 'error' in parse_export(invalid)
+        assert source.is_file()
+    result = parse_export(token)['data']
+    assert result == {'total': 2081, 'collections': [
+        {'name': 'Large', 'kind': 'playlist', 'ignored': 0, 'firstPage': 0, 'pageCount': 65},
+        {'name': 'Again', 'kind': 'playlist', 'ignored': 1, 'firstPage': 65, 'pageCount': 1}]}
+    for metadata, expected in zip(result['collections'], collections):
+        start = metadata['firstPage']
+        for offset in range(metadata['pageCount']):
+            actual = json.loads((job / f'{start + offset}.json').read_text(encoding='utf-8'))
+            assert actual == expected[32 * offset:32 * (offset + 1)]
+    assert len(list(job.iterdir())) == 66 and not source.exists()
+
+    broken_token = 'af' * 16
+    broken_job = job.parent / broken_token
+    broken_job.mkdir()
+    for contents in ('', '{', '{"playlists":[]}'):
+        (broken_job / 'export').write_text(contents, encoding='utf-8')
+        assert 'error' in parse_export(broken_token)
+        assert not list(broken_job.iterdir())
+print('Android import returns a small preview and 66 ordered pages for 2,081 records, and cleans up failed exports.')
