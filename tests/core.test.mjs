@@ -2,11 +2,39 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { trackWindowRange } from '../web/track-window.js';
 import { nextIndex, escapeHTML, fileMetadata, formatTime, matches, rankTracks, sortReleases, emptyLibrary } from "../web/core.js";
-import { insertUpNext, listeningArtists, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry } from '../web/core.js';
+import { insertUpNext, listeningArtists, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, filterPlaylistTracks, removePlaylistEntry } from '../web/core.js';
 import { appLanguage, countLabel, setLanguage, tr } from '../web/i18n.js';
 import { isFileDrag, searchTracks } from '../web/core.js';
 import { savedTrackMetadata, isDuplicateImport } from '../web/library.js';
 import { BrowserPlayer, inPreloadWindow, isStreamingAudio } from '../web/player.js';
+
+test('playlist name search keeps matching pinned and recently played playlists in order', () => {
+  const playlists = [
+    { name: 'Night Shift', lastPlayedAt: 5 },
+    { name: 'Morning', pinnedAt: 4 },
+    { name: 'Night Drive', pinnedAt: 2 },
+    { name: 'Last Night', lastPlayedAt: 6 },
+    { name: 'Вечерние песни', lastPlayedAt: 1 },
+  ];
+  assert.deepEqual(sortPlaylists(playlists, ' NIGHT ').map(playlist => playlist.name), ['Night Drive', 'Last Night', 'Night Shift']);
+  assert.equal(sortPlaylists(playlists, 'ВЕЧЕР')[0].name, 'Вечерние песни');
+  assert.deepEqual(sortPlaylists(playlists, 'absent'), []);
+  assert.equal(sortPlaylists(playlists, '').length, playlists.length);
+});
+
+test('playlist track search preserves playback and stored indexes for repeated songs', () => {
+  const repeats = { id: 'a', title: 'Night Drive', artist: 'Star Duo' };
+  const before = { id: 'b', title: 'First Light', artist: 'Day' };
+  const after = { id: 'c', title: 'Sunrise', artist: 'Star Duo' };
+  const trackIds = ['a', 'b', 'a', 'c'];
+  const sorted = [before, repeats, repeats, after];
+  assert.deepEqual(filterPlaylistTracks(trackIds, sorted, ' NIGHT '), {
+    tracks: [repeats, repeats], playlistPositions: [0, 2], trackPositions: [1, 2],
+  });
+  assert.deepEqual(filterPlaylistTracks(trackIds, sorted, 'star duo').trackPositions, [1, 2, 3]);
+  assert.deepEqual(filterPlaylistTracks(trackIds, sorted, 'absent').tracks, []);
+  assert.equal(filterPlaylistTracks(trackIds, sorted, '').tracks, sorted);
+});
 
 test('preloading uses the last ten seconds of a streaming track', () => {
   const audio = { duration: 120, currentTime: 109.9, paused: false };
