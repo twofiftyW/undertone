@@ -4,4 +4,10 @@
     <string name="playback_pause">Pause</string>
     <string name="playback_play">Play</string>
     <string name="playback_next">Next</string>
+    <string name="spotify_import">Spotify import</string>
+    <string name="spotify_starting">Preparing your import…</string>
+    <string name="spotify_progress">%1$d / %2$d recordings checked</string>
+    <string name="spotify_finished">Spotify import finished</string>
+    <string name="spotify_paused">Spotify import paused</string>
+    <string name="spotify_offline">Catalog unavailable. Open Undertone to resume.</string>
 </resources>

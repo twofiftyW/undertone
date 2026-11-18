@@ -37,6 +37,9 @@ def offline_files():
 def dispatch(operation, args):
     import backend
     import device_sync
+    if operation.startswith('spotify_job_'):
+        import spotify_job
+        return spotify_job.dispatch(ROOT, operation, args)
     if operation == 'music':
         if args.get('operation') not in OPERATIONS:
             raise ValueError('Unknown music request')

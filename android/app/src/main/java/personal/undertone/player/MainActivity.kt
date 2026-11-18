@@ -1,8 +1,10 @@
 package personal.undertone.player
 
 import android.app.Activity
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -29,12 +31,14 @@ import java.io.FileOutputStream
 import java.io.StringReader
 import java.net.NetworkInterface
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private lateinit var phoneDiscovery: PhoneDiscovery
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var unregisterBackCallback: (() -> Unit)? = null
+    private val openSpotifyImport = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,7 +99,33 @@ class MainActivity : Activity() {
             dispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             unregisterBackCallback = { dispatcher.unregisterOnBackInvokedCallback(callback) }
         }
+        handleImportIntent(intent)
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleImportIntent(intent)
+    }
+
+    private fun handleImportIntent(intent: Intent?) {
+        if (intent?.action != SpotifyImportService.OPEN_IMPORT) return
+        intent.action = null
+        openSpotifyImport.set(true)
+        webView.evaluateJavascript("if (window.undertoneOpenSpotifyImport && window.UndertoneDevice.consumeSpotifyImportIntent()) window.undertoneOpenSpotifyImport()", null)
+    }
+
+    fun consumeImportIntent(): Boolean = openSpotifyImport.getAndSet(false)
+
+    fun requestImportNotifications() = runOnUiThread {
+        if (Build.VERSION.SDK_INT < 33 || isFinishing || isDestroyed ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return@runOnUiThread
+        val preferences = getSharedPreferences("spotify-import", Context.MODE_PRIVATE)
+        if (!preferences.getBoolean("askedForNotifications", false)) {
+            preferences.edit().putBoolean("askedForNotifications", true).apply()
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42)
+        }
     }
 
     private fun navigateBack() {
@@ -157,6 +187,24 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
 
     @JavascriptInterface fun request(id: String, operation: String, args: String) {
         if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 1024 * 1024) return
+        if (operation in setOf("spotify_job_start", "spotify_job_resume") || (operation == "spotify_job_pause" && SpotifyImportService.active)) {
+            SpotifyImportService.command(context, operation, args) { response -> callback(id, response) }
+            if (operation != "spotify_job_pause") (context as? MainActivity)?.requestImportNotifications()
+            return
+        }
+        if (operation in setOf("spotify_job_status", "spotify_job_results", "spotify_job_ack", "spotify_job_pause")) {
+            workers.execute {
+                val response = try {
+                    val data = Engine.call(context, operation, JSONObject(args))
+                    if (operation == "spotify_job_status") data.put("serviceActive", SpotifyImportService.active)
+                    JSONObject().put("data", data).toString()
+                } catch (error: Exception) {
+                    JSONObject().put("error", error.message ?: "Could not read the Spotify import.").toString()
+                }
+                callback(id, response)
+            }
+            return
+        }
         if (operation in PhoneDiscovery.operations) {
             phoneDiscovery.request(operation, args) { response -> callback(id, response) }
             return
@@ -169,6 +217,7 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     }
 
     @JavascriptInterface fun getAppIcon(): String = reply { launcherIcons.current() }
+    @JavascriptInterface fun consumeSpotifyImportIntent(): Boolean = (context as? MainActivity)?.consumeImportIntent() ?: false
     @JavascriptInterface fun appVersion(): String = BuildConfig.VERSION_NAME
     @JavascriptInterface fun setAppIcon(id: String): String = reply { launcherIcons.select(id) }
 

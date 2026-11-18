@@ -44,7 +44,7 @@ export function appendSpotifyPreview(state, incoming) {
   state.previewCount = count;
 }
 
-export async function prepareSpotifyCollections(library, selected) {
+export async function prepareSpotifyCollections(library, selected, targetPlaylistId = null) {
   const known = new Map();
   for (const track of Object.values(library.tracks)) {
     if (track.source === 'unmatched') continue;
@@ -56,6 +56,7 @@ export async function prepareSpotifyCollections(library, selected) {
   const playlists = [];
   const previous = library.playlists.filter(playlist => playlist.importedFrom === 'Spotify');
   const reused = new Map();
+  const additions = new Map();
   for (const item of selected) {
     const ids = [];
     const sourceIds = [];
@@ -70,15 +71,19 @@ export async function prepareSpotifyCollections(library, selected) {
         return [placeholder.id, placeholder.id];
       }));
       for (const [sourceId, id] of resolved) {
-        if (item.kind === 'liked') liked.add(id);
+        if (!targetPlaylistId && item.kind === 'liked') liked.add(id);
         else { ids.push(id); sourceIds.push(sourceId); }
       }
       if (offset + chunk.length < item.tracks.length) await new Promise(resolve => setTimeout(resolve, 0));
     }
-    if (item.kind === 'liked') continue;
+    if (!targetPlaylistId && item.kind === 'liked') continue;
     const keyBytes = new TextEncoder().encode(JSON.stringify([item.sourceUrl || '', item.name, sourceIds]));
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', keyBytes));
     const importKey = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+    if (targetPlaylistId) {
+      additions.set(importKey, { name: item.name, ids });
+      continue;
+    }
     // Older imports have no fingerprint. Reuse only a complete ordered match
     // from Spotify, including every duplicate, and consume each playlist once.
     const existing = previous.find(playlist => !reused.has(playlist.id) &&
@@ -87,7 +92,29 @@ export async function prepareSpotifyCollections(library, selected) {
     if (existing) reused.set(existing.id, importKey);
     else playlists.push({ id: crypto.randomUUID(), name: item.name, trackIds: ids, importedFrom: 'Spotify', spotifyImportKey: importKey, importedAt: Date.now() });
   }
-  return { placeholders, liked, playlists, reused };
+  return { placeholders, liked, playlists, reused, additions };
+}
+
+// Track whole exports by their original ordered Spotify IDs, even after matching
+// replaces those IDs in the playlist or the listener edits the playlist by hand.
+export function appendSpotifyToPlaylist(playlist, additions) {
+  if (!playlist) throw new Error('This playlist is gone.');
+  const imported = new Set(playlist.spotifyAppendKeys || []);
+  const tracks = [];
+  for (const [key, { name, ids }] of additions) {
+    if (imported.has(key) || playlist.spotifyImportKey === key) continue;
+    if (!playlist.spotifyImportKey && playlist.importedFrom === 'Spotify' && playlist.name === name &&
+        playlist.trackIds.length === ids.length && ids.every((id, i) => playlist.trackIds[i] === id)) {
+      playlist.spotifyImportKey = key;
+      continue;
+    }
+    for (const id of ids) tracks.push(id);
+    imported.add(key);
+  }
+  if (tracks.length) {
+    playlist.trackIds = playlist.trackIds.concat(tracks);
+    playlist.spotifyAppendKeys = [...imported];
+  }
 }
 
 export function replaceLibraryTracks(library, candidates) {

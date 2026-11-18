@@ -3,4 +3,10 @@
     <string name="playback_pause">Пауза</string>
     <string name="playback_play">Воспроизвести</string>
     <string name="playback_next">Следующий трек</string>
+    <string name="spotify_import">Импорт из Spotify</string>
+    <string name="spotify_starting">Подготовка импорта…</string>
+    <string name="spotify_progress">Проверено записей: %1$d из %2$d</string>
+    <string name="spotify_finished">Импорт из Spotify завершён</string>
+    <string name="spotify_paused">Импорт из Spotify приостановлен</string>
+    <string name="spotify_offline">Каталог недоступен. Откройте Undertone, чтобы продолжить.</string>
 </resources>

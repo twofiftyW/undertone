@@ -356,7 +356,7 @@ test('a failed native load reports an error and can be retried', async () => {
   } finally { player.dispose(); }
 });
 
-import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, replaceLibraryTracks, prepareSpotifyCollections, appendSpotifyPreview } from '../web/library.js';
+import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, replaceLibraryTracks, prepareSpotifyCollections, appendSpotifyPreview, appendSpotifyToPlaylist } from '../web/library.js';
 
 test('switching Linux tracks stops the old sound and ignores its delayed native errors', async () => {
   let state = { token: 0, paused: true, ready: false };
@@ -539,6 +539,35 @@ test('app icons follow the theme by default and restore a separate manual choice
   assert.equal(nativeIcon, 'blue');
 });
 
+test('background Spotify results are acknowledged only after the library is saved, and replay after an interrupted save', async () => {
+  const { spotifyJobClient } = await import('../web/spotify-job.js');
+  const outstanding = Array.from({ length: 77 }, (_, index) => ({ seq: index + 1, id: 's' + index }));
+  let fail = true, visible = true;
+  const writes = [], acknowledgements = [];
+  const client = spotifyJobClient({
+    visible: () => visible,
+    update() {},
+    onError() { visible = false; },
+    apply(items) { writes.push(items.map(item => item.seq)); },
+    save: async () => { if (fail) throw Error('Disk full'); },
+    request: async (operation, args) => {
+      if (operation === 'spotify_job_status') return { jobId: 'a', state: 'done', pending: outstanding.length };
+      if (operation === 'spotify_job_results') return { jobId: 'a', items: outstanding.filter(item => item.seq > args.after).slice(0, args.limit) };
+      assert.equal(operation, 'spotify_job_ack');
+      acknowledgements.push(args.through);
+      outstanding.splice(0, args.through);
+    }
+  });
+  await client.refresh();
+  assert.deepEqual(acknowledgements, []);
+  fail = false;
+  visible = true;
+  await client.refresh();
+  assert.deepEqual(acknowledgements, [77]);
+  assert.deepEqual(writes[0], writes[1]);
+  assert.equal(writes[1].length, 77);
+});
+
 test('Android requests return asynchronously, carry provider arguments, and expose engine errors', async () => {
   const originalWindow = globalThis.window;
   globalThis.window = { UndertoneDevice: { request(id, operation, args) {
@@ -680,4 +709,36 @@ test('a batch of provider results respects intervening manual choices and merges
   assert.deepEqual(library.recent, [manual.id, automatic.id]);
   assert.deepEqual(library.playlists[0].trackIds, [manual.id, automatic.id, automatic.id, automatic.id]);
   assert.equal(otherPlaylist.trackIds, unchanged);
+});
+
+test('import into an existing playlist appends in source order and can be retried after matching', async () => {
+  const a = { title: 'A', artist: 'One', uri: 'spotify:track:a' };
+  const b = { title: 'B', artist: 'Two' };
+  const source = [
+    { name: 'Export', kind: 'playlist', tracks: [a, b, a] },
+    { name: 'Saved', kind: 'liked', tracks: [b, a] }
+  ];
+  const target = { id: 'one', name: 'My playlist', trackIds: ['original'] };
+  const other = { id: 'two', name: 'Another', trackIds: ['keep'] };
+  const library = { tracks: {}, playlists: [target, other], liked: ['keep-liked'], recent: [] };
+  const prepared = await prepareSpotifyCollections(library, source, target.id);
+  assert.equal(prepared.playlists.length, 0);
+  assert.equal(prepared.liked.size, 0);
+  target.trackIds.push('added-during-preview');
+  appendSpotifyToPlaylist(target, prepared.additions);
+  library.tracks = Object.fromEntries(prepared.placeholders);
+  const bId = (await spotifyPlaceholder(b)).id;
+  assert.deepEqual(target.trackIds, ['original', 'added-during-preview', a.uri, bId, a.uri, bId, a.uri]);
+  assert.deepEqual(library.liked, ['keep-liked']);
+  assert.deepEqual(other.trackIds, ['keep']);
+  replaceLibraryTracks(library, [[a.uri, { id: 'matched-a', source: 'monochrome' }], [bId, { id: 'matched-b', source: 'youtube' }]]);
+  const retry = await prepareSpotifyCollections(library, source, target.id);
+  assert.equal(retry.placeholders.size, 0);
+  const beforeRetry = target.trackIds;
+  appendSpotifyToPlaylist(target, retry.additions);
+  assert.equal(target.trackIds, beforeRetry);
+  assert.deepEqual(target.trackIds.slice(2), ['matched-a', 'matched-b', 'matched-a', 'matched-b', 'matched-a']);
+  appendSpotifyToPlaylist(other, retry.additions);
+  assert.deepEqual(other.trackIds.slice(1), target.trackIds.slice(2));
+  assert.throws(() => appendSpotifyToPlaylist(undefined, retry.additions), /playlist is gone/);
 });
