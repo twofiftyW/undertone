@@ -1,6 +1,6 @@
 [package]
 name = "undertone"
-version = "0.0.3-alpha"
+version = "0.0.4-alpha"
 description = "Your own little corner of music."
 authors = ["Undertone"]
 edition = "2021"

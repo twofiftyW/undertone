@@ -7,11 +7,11 @@ android {
     namespace = "personal.undertone.player"
     compileSdk = 35
     defaultConfig {
-        applicationId = "personal.undertone.player"
+        applicationId = "personal.undertone.player.alpha"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.0.3-alpha"
+        versionCode = 10
+        versionName = "0.0.4-alpha"
         testInstrumentationRunner = "personal.undertone.player.EngineInstrumentation"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }

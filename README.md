@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone 0.0.3-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A private music player for Linux, Windows, and Android. **Undertone 0.0.4-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** See the release notes for APK availability. In-place updates require the same application ID and signing certificate as the installed version. Undertone and Undertone Review keep separate libraries.
+- **Android:** Install `Undertone-0.0.4-alpha-android.apk` over **Undertone Alpha 0.0.3**. The Alpha releases use the same application ID (`personal.undertone.player.alpha`) and signing certificate. Android keeps the app’s library, downloads and preferences during the update. Undertone Review uses a separate library.
 
 Use **Language → Русский** in the top bar to switch the interface. The setting is saved on each device.
 
@@ -101,10 +101,10 @@ While the PC connection is enabled, Undertone answers local discovery requests o
 
 If UFW is enabled on Linux and either device cannot find the other, click **Allow phone through firewall** in the PC connection dialog and approve the system prompts. This allows TCP/UDP 47832 and UDP 47834 from the PC’s private local subnet. On Windows, allow the packaged Python runtime on private networks if Windows Firewall asks. On Wi-Fi networks that block broadcast discovery, use the PC address shown in the dialog.
 
-Build Android with `python3 scripts/android_setup.py` once, then `python3 scripts/build_android.py`. Gradle builds and lints the release, aligns it, signs it locally, and verifies the signature. The app embeds the same Python music modules using Chaquopy; no Python install is needed on the phone. Android’s YouTube extraction has no bundled external JavaScript executable, so availability may differ from the Linux yt-dlp/Deno setup.
+To build the Android release, run `python3 scripts/android_setup.py` once. Set `UNDERTONE_ALPHA_KEYSTORE` to the existing Alpha PKCS#12 keystore and provide its password through `UNDERTONE_SIGNING_PASSWORD`. Then run `python3 scripts/build_android.py`. The helper checks the signing certificate, builds and lints the release, aligns the APK, signs it locally, and verifies the result. The app embeds the same Python music modules using Chaquopy. Android’s YouTube extraction has no bundled external JavaScript executable, so availability may differ from the Linux yt-dlp/Deno setup.
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.3-alpha-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.4-alpha-windows-x64.zip`.
 
-See the release notes for build verification. Android signing material is kept under ignored `.private/`. User libraries and downloaded music are stored separately from the app.
+See the release notes for build verification. The Android build helper also accepts the Alpha keystore at the ignored path `.private/undertone-alpha.p12`. User libraries and downloaded music are stored separately from the app.
