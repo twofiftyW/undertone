@@ -1,0 +1,88 @@
+.appearance-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  color: var(--muted);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.appearance-button .icon { width: 18px; height: 18px; }
+.appearance-button:hover, .appearance-button:focus-visible { color: var(--accent); }
+
+dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
+.theme-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.theme-choice { display: block; position: relative; cursor: pointer; }
+.theme-choice > input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.theme-choice:hover .theme-card { border-color: var(--muted); }
+.theme-choice > input:checked + .theme-card { border-color: var(--accent); }
+.theme-choice > input:focus-visible + .theme-card { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.theme-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  height: 65px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--accent);
+}
+.theme-sleeve {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: var(--accent-tint);
+}
+.theme-sleeve .icon { width: 24px; height: 24px; stroke-width: 1.4; }
+.theme-wave { display: flex; align-items: center; gap: 3px; height: 24px; }
+.theme-wave i { width: 3px; height: 6px; border-radius: 3px; background: currentColor; }
+.theme-wave i:nth-child(2n) { height: 13px; }
+.theme-wave i:nth-child(3) { height: 22px; }
+.theme-wave i:nth-child(5) { height: 18px; }
+.theme-label {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  min-height: 35px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.theme-label .icon { width: 15px; height: 15px; stroke-width: 2.6; opacity: 0; }
+.theme-choice > input:checked + .theme-card .theme-label .icon { opacity: 1; color: var(--accent); }
+
+@media (max-width: 1050px) {
+  .appearance-button { width: 30px; height: 32px; justify-content: center; padding: 0; }
+  .appearance-button span { display: none; }
+}
+@media (max-width: 400px) {
+  .topbar-actions { gap: 8px; }
+  .theme-choices { gap: 9px; }
+}

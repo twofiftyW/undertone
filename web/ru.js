@@ -1,4 +1,9 @@
 export const russian = {
+  "Appearance": "Оформление",
+  "Forest green": "Лесной зелёный",
+  "Midnight blue": "Ночной синий",
+  "AMOLED black": "Чёрный AMOLED",
+  "Graphite gray": "Серый графит",
   "A few shortcuts.": "Горячие клавиши",
   "A good one. Added to liked songs.": "Трек добавлен в любимые.",
   "A home for your own music.": "Ваша локальная музыка",
