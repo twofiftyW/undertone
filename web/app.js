@@ -15,7 +15,7 @@ const icon = (name, extra = "") => `<svg class="icon ${extra}" aria-hidden="true
 const nativeAudio = window.UndertoneAudio;
 await restoreAppIcon();
 const platform = native ? await native.invoke('platform') : 'browser';
-const trackWindows = platform === 'android' ? new TrackWindows() : null;
+const trackWindows = native ? new TrackWindows() : null;
 const linuxPlayback = platform === 'linux';
 const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
 const audio = linuxPlayback ? new LinuxPlayer(native) : $("#audio");
@@ -806,7 +806,7 @@ async function primeNextTrack() {
 }
 
 function renderQueue() {
-  if (nativeAudio && $("#queue-panel").classList.contains("hidden")) {
+  if (native && $("#queue-panel").classList.contains("hidden")) {
     $("#queue-content").replaceChildren();
     return;
   }
@@ -944,7 +944,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.5-alpha";
+  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.6-alpha";
   openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
