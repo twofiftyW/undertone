@@ -2,7 +2,7 @@ import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueue
 import { isFileDrag, searchTracks } from "./core.js";
 import { nativeRuntime as native, musicRequest } from "./runtime.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
-import { LinuxPlayer } from "./player.js";
+import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
 import { canDownload, resolveCatalogAudio, spotifyPlaceholder, replaceLibraryTrack, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
@@ -18,7 +18,7 @@ const platform = native ? await native.invoke('platform') : 'browser';
 const trackWindows = native ? new TrackWindows() : null;
 const linuxPlayback = platform === 'linux';
 const deviceStorage = linuxPlayback || platform === 'windows' || !!nativeAudio;
-const audio = linuxPlayback ? new LinuxPlayer(native) : $("#audio");
+const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
 const view = $("#view");
 const dialog = $("#dialog");
 let library = emptyLibrary();
@@ -69,9 +69,7 @@ let navigationHistory = [];
 let recentTimer;
 let autoplay = false;
 let radioLoading = false;
-let preparedNextKey = '';
-let preloadRequest = 0;
-let preloadMode = '';
+let nextPreload = null;
 let queueSession = '';
 let queueAddMode = false;
 let draggedQueueKey = '';
@@ -689,14 +687,45 @@ function recordRecent(track, playedAt) {
   }
 }
 
+async function resolvePlaybackSource(track, force = false) {
+  if (track.source === 'local') {
+    if (native && track.nativePath) return { url: linuxPlayback ? track.nativePath : native.convertFileSrc(track.nativePath) };
+    const file = await idbRequest(db.transaction('files').objectStore('files').get(track.fileId));
+    if (!file) throw new Error(tr("That imported file is missing. Import it again."));
+    const objectURL = URL.createObjectURL(file);
+    return { url: objectURL, objectURL };
+  }
+  if (['monochrome', 'youtube'].includes(track.source)) {
+    const result = await resolveCatalogAudio(track, deviceStorage ? native : null, musicRequest, force);
+    return { url: result.offline && !linuxPlayback ? native.convertFileSrc(result.url) : result.url, duration: result.duration };
+  }
+  return { url: streamURL(track) };
+}
+
 async function playAt(index, list = queue, force = false, playlistId = null) {
   if (!list[index]) return;
   const ticket = ++playTicket;
-  if (linuxPlayback && !force && list === queue) {
-    const advanced = await audio.advance(list[index].queueKey);
-    if (advanced || ticket !== playTicket) return;
-  }
   const existingQueue = list === queue;
+  const key = list[index].queueKey;
+  let bufferedSource;
+  if (!nativeAudio && existingQueue && !force && nextPreload && nextPreload.key === key) {
+    const request = nextPreload;
+    const staged = await request.task;
+    if (ticket !== playTicket) return;
+    if (staged && request === nextPreload && queue.some(track => track.queueKey === key)) {
+      if (linuxPlayback) {
+        if (await audio.advance(key) || ticket !== playTicket) return;
+      } else if (audio.takePreloaded(key)) {
+        bufferedSource = request.source;
+        nextPreload = null;
+      }
+    }
+    if (list !== queue) {
+      list = queue;
+      index = list.findIndex(track => track.queueKey === key);
+      if (index < 0) return;
+    }
+  }
   const selected = playableSelection(list, index);
   list = selected.tracks;
   index = selected.index;
@@ -708,12 +737,14 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
   if (shuffle && !nativeAudio && (!existingQueue || !shuffleOrder.length)) {
     shuffleOrder = shuffleQueueKeys(queue, current.queueKey, shuffleOrder);
   }
-  ++preloadRequest; preparedNextKey = '';
+  clearPreload();
   queueSession = crypto.randomUUID();
   loading = true;
-  if (!linuxPlayback) audio.pause();
-  audio.removeAttribute('src');
-  audio.load();
+  if (!bufferedSource) {
+    if (!linuxPlayback) audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
   updatePlayer();
   updateProgress(0, current.duration);
   if (nativeAudio) {
@@ -721,29 +752,17 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
     return;
   }
   try {
-    let source;
-    let newObjectURL;
-    if (current.source === "local") {
-      if (native && current.nativePath) source = linuxPlayback ? current.nativePath : native.convertFileSrc(current.nativePath);
-      else {
-        const file = await idbRequest(db.transaction("files").objectStore("files").get(current.fileId));
-        if (!file) throw new Error(tr("That imported file is missing. Import it again."));
-        source = newObjectURL = URL.createObjectURL(file);
-      }
-    } else if (["monochrome", "youtube"].includes(current.source)) {
-      const recording = current;
-      const resolved = await resolveCatalogAudio(recording, deviceStorage ? native : null, musicRequest, force);
-      if (ticket !== playTicket) return;
-      source = resolved.offline && !linuxPlayback ? native.convertFileSrc(resolved.url) : resolved.url;
-      if (resolved.duration) recording.duration = resolved.duration;
-      document.querySelectorAll("[data-duration-for]").forEach(node => { if (node.dataset.durationFor === recording.id) node.textContent = formatTime(recording.duration); });
-    } else source = streamURL(current);
-    if (ticket !== playTicket) { if (newObjectURL) URL.revokeObjectURL(newObjectURL); return; }
-    if (!linuxPlayback) audio.pause();
+    const recording = current;
+    const source = bufferedSource ?? await resolvePlaybackSource(recording, force);
+    if (ticket !== playTicket) { if (source.objectURL) URL.revokeObjectURL(source.objectURL); return; }
+    const duration = bufferedSource && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : source.duration;
+    if (duration) {
+      recording.duration = duration;
+      document.querySelectorAll('[data-duration-for]').forEach(node => { if (node.dataset.durationFor === recording.id) node.textContent = formatTime(duration); });
+    }
     if (objectURL) URL.revokeObjectURL(objectURL);
-    objectURL = newObjectURL;
-    if (linuxPlayback) audio.setSource(source, current.queueKey);
-    else audio.src = source;
+    objectURL = source.objectURL;
+    if (!bufferedSource) audio.setSource(source.url, recording.queueKey);
     mediaMetadata();
     await audio.play();
     if (ticket !== playTicket) return;
@@ -779,8 +798,7 @@ async function step(direction, ended = false) {
   if (!current) return;
   if (nativeAudio) { nativeAudio.command(direction > 0 ? "next" : "previous", ""); return; }
   if (direction < 0 && audio.currentTime > 3) { audio.currentTime = 0; return; }
-  const planned = queue.findIndex(t => t.queueKey === preparedNextKey);
-  const index = direction > 0 && planned >= 0 && (ended || planned !== queueIndex) ? planned : nextQueueIndex(queue, queueIndex, shuffle && shuffleOrder, { direction, repeat, ended });
+  const index = nextQueueIndex(queue, queueIndex, shuffle && shuffleOrder, { direction, repeat, ended });
   if (index >= 0) return playAt(index);
   else if (direction > 0 && autoplay && current.source === "monochrome") extendRadio();
   else if (ended) { playing = false; updatePlayIcons(); }
@@ -788,21 +806,38 @@ async function step(direction, ended = false) {
   else toast(tr("You’ve reached the end of your queue."));
 }
 
-async function primeNextTrack() {
-  if (!linuxPlayback || !current || audio.entry !== current.queueKey) return;
-  const mode = `${shuffle}:${repeat}`;
+function clearPreload() {
+  const request = nextPreload;
+  if (!request) return;
+  nextPreload = null;
+  audio.prepareNext(null).catch(() => {});
+  if (request.source?.objectURL) URL.revokeObjectURL(request.source.objectURL);
+}
+
+function primeNextTrack() {
+  if (nativeAudio || !current || audio.entry !== current.queueKey) return;
+  if (navigator.onLine === false || !isStreamingAudio(audio.src)) { clearPreload(); return; }
+  const inWindow = inPreloadWindow(audio);
+  if (!nextPreload && !inWindow) return;
   const index = nextQueueIndex(queue, queueIndex, shuffle && shuffleOrder, { repeat, ended: true });
   const upcoming = queue[index];
-  if ((upcoming?.queueKey || '') === preparedNextKey && mode === preloadMode) return;
-  const request = ++preloadRequest, fromKey = current.queueKey;
-  preparedNextKey = upcoming?.queueKey || ''; preloadMode = mode;
-  try {
-    await audio.prepareNext(null);
-    if (!upcoming) return;
-    const resolved = upcoming.source === 'local' ? { url: upcoming.nativePath } : ['monochrome', 'youtube'].includes(upcoming.source) ? await resolveCatalogAudio(upcoming, native, musicRequest) : { url: streamURL(upcoming) };
-    if (request !== preloadRequest || current?.queueKey !== fromKey || !queue.some(t => t.queueKey === upcoming.queueKey)) return;
-    await audio.prepareNext({ key: upcoming.queueKey, url: resolved.url });
-  } catch { if (request === preloadRequest) preparedNextKey = ''; }
+  if (nextPreload?.key === upcoming?.queueKey && nextPreload?.fromKey === current.queueKey) return;
+  clearPreload();
+  if (!inWindow || !upcoming) return;
+  const request = { key: upcoming.queueKey, fromKey: current.queueKey };
+  nextPreload = request;
+  request.task = (async () => {
+    try {
+      const source = await resolvePlaybackSource(upcoming);
+      if (request !== nextPreload || navigator.onLine === false) {
+        if (source.objectURL) URL.revokeObjectURL(source.objectURL);
+        return false;
+      }
+      request.source = source;
+      await audio.prepareNext({ key: request.key, url: source.url });
+      return request === nextPreload;
+    } catch { return false; }
+  })();
 }
 
 function renderQueue() {
@@ -1019,6 +1054,7 @@ async function removeLocal(id) {
   if (!track || track.source !== "local") return;
   if (current?.id === id) {
     ++playTicket;
+    clearPreload();
     audio.pause();
     audio.removeAttribute("src");
     if (nativeAudio) nativeAudio.command("stop", "");
@@ -1564,17 +1600,19 @@ $("#seek").addEventListener("change", () => {
 audio.addEventListener("play", () => { playing = true; updatePlayIcons(); });
 audio.addEventListener("pause", () => { playing = false; updatePlayIcons(); });
 audio.addEventListener("loadedmetadata", () => { if (current && Number.isFinite(audio.duration)) current.duration = audio.duration; updateProgress(); });
-audio.addEventListener("timeupdate", () => updateProgress());
+audio.addEventListener("timeupdate", () => { updateProgress(); primeNextTrack(); });
 audio.addEventListener("ended", () => step(1, true));
+window.addEventListener('offline', clearPreload);
 audio.addEventListener('trackchange', event => {
   if (loading) return;
   const index = queue.findIndex(t => t.queueKey === event.key);
   if (index < 0) return;
-  ++playTicket; ++preloadRequest; preparedNextKey = '';
+  ++playTicket;
+  nextPreload = null;
   queueIndex = index; current = queue[index];
   recordRecent(current); mediaMetadata(); updatePlayer(); primeNextTrack();
 });
-audio.addEventListener("error", () => { if (!current || !audio.src) return; playing = loading = false; updatePlayIcons(); toast(audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection.")), 6500); });
+audio.addEventListener("error", () => { if (!current || !audio.src) return; clearPreload(); playing = loading = false; updatePlayIcons(); toast(audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection.")), 6500); });
 
 document.addEventListener("keydown", (event) => {
   const editing = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;

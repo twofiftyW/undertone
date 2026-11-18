@@ -6,6 +6,53 @@ import { insertUpNext, listeningArtists, nextQueueIndex, shuffleQueueKeys, playl
 import { appLanguage, countLabel, setLanguage, tr } from '../web/i18n.js';
 import { isFileDrag, searchTracks } from '../web/core.js';
 import { savedTrackMetadata, isDuplicateImport } from '../web/library.js';
+import { BrowserPlayer, inPreloadWindow, isStreamingAudio } from '../web/player.js';
+
+test('preloading uses the last ten seconds of a streaming track', () => {
+  const audio = { duration: 120, currentTime: 109.9, paused: false };
+  assert.equal(inPreloadWindow(audio), false);
+  assert.equal(inPreloadWindow({ ...audio, currentTime: 110 }), true);
+  assert.equal(inPreloadWindow({ ...audio, currentTime: 116, paused: true }), false);
+  assert.equal(inPreloadWindow({ ...audio, currentTime: 120 }), false);
+  assert.equal(inPreloadWindow({ ...audio, duration: Infinity }), false);
+  assert.equal(isStreamingAudio('https://tracks.monochrome.st/track/123'), true);
+  for (const local of ['/downloads/song.flac', 'blob:https://tauri.localhost/local', 'http://asset.localhost/file', 'https://asset.localhost/file']) {
+    assert.equal(isStreamingAudio(local), false);
+  }
+});
+
+test('Windows switches to the element that is still buffering the selected occurrence', async () => {
+  class AudioElement extends EventTarget {
+    constructor() { super(); this.volume = 0.25; this.muted = true; this.loads = 0; this.plays = 0; this.sourceChanges = 0; }
+    get src() { return this.url; }
+    set src(value) { this.url = value; this.sourceChanges++; }
+    removeAttribute() { this.url = ''; }
+    load() { this.loads++; }
+    pause() {}
+    async play() { this.plays++; }
+  }
+  const first = new AudioElement();
+  const next = new AudioElement();
+  next.volume = 1;
+  next.muted = false;
+  const player = new BrowserPlayer(first, () => next);
+  await player.prepareNext({ key: 'second-occurrence', url: 'https://tracks.monochrome.st/track/123' });
+  assert.equal(next.preload, 'auto');
+  assert.equal(player.takePreloaded('different-occurrence'), false);
+  assert.equal(player.takePreloaded('second-occurrence'), true);
+  await player.play();
+  assert.equal(next.sourceChanges, 1);
+  assert.equal(next.loads, 0);
+  assert.equal(next.plays, 1);
+  assert.equal(first.loads, 1);
+  assert.equal(next.volume, 0.25);
+  assert.equal(next.muted, true);
+  let endings = 0;
+  player.addEventListener('ended', () => endings++);
+  first.dispatchEvent(new Event('ended'));
+  next.dispatchEvent(new Event('ended'));
+  assert.equal(endings, 1);
+});
 
 test('large track windows cover the viewport after fast jumps including both ends of a list', () => {
   const count = 2191;

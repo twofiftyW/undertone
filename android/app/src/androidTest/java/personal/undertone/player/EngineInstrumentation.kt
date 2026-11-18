@@ -26,12 +26,21 @@ class EngineInstrumentation : Instrumentation() {
             val results = Bundle()
             try {
                 val context = targetContext
+                if (arguments.getString("preload_only") == "true") {
+                    val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    val bridge = PlaybackBridge(context)
+                    try { checkStreamingPreload(bridge) }
+                    finally { bridge.command("stop", ""); runOnMainSync { activity.finish() } }
+                    results.putString("result", "PASS: last-ten-second preload, skip during preparation, and natural handoff")
+                    finish(Activity.RESULT_OK, results)
+                    return@Thread
+                }
                 if (arguments.getString("shuffle_only") == "true") {
                     val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     val bridge = PlaybackBridge(context)
                     try { checkFiniteShuffle(bridge) }
                     finally { bridge.command("stop", ""); runOnMainSync { activity.finish() } }
-                    results.putString("result", "PASS: finite Android shuffle and prepared handoffs")
+                    results.putString("result", "PASS: finite offline Android shuffle and queue transitions")
                     finish(Activity.RESULT_OK, results)
                     return@Thread
                 }
@@ -90,27 +99,30 @@ class EngineInstrumentation : Instrumentation() {
                 val a = fixture('a'); val b = fixture('b'); val c = fixture('c')
                 fun payload(index: Int, vararg songs: JSONObject): String = JSONObject().put("tracks", org.json.JSONArray(songs.toList())).put("index", index).put("session", "queue-test").put("volume", 0).put("shuffle", false).put("repeat", "off").toString()
                 bridge.loadQueue(payload(0, a, b, c))
-                waitFor("Next Android song was not prepared") { it.optString("session") == "queue-test" && it.optBoolean("nextPrepared") && it.optString("nextKey") == "fixture-b" }
+                waitFor("Offline queue did not start") { it.optString("session") == "queue-test" && it.optBoolean("playing") }
+                check(JSONObject(PlaybackService.snapshot).optString("nextKey").isEmpty())
                 val startedAt = JSONObject(PlaybackService.snapshot).optDouble("position")
                 bridge.replaceQueue(payload(1, b, a, c))
-                waitFor("Reorder restarted or replaced the playing song") { it.optInt("index") == 1 && it.optString("key") == "fixture-a" && it.optBoolean("nextPrepared") && it.optString("nextKey") == "fixture-c" }
+                waitFor("Reorder restarted or replaced the playing song") { it.optInt("index") == 1 && it.optString("key") == "fixture-a" && it.optBoolean("playing") }
                 check(JSONObject(PlaybackService.snapshot).optDouble("position") >= startedAt - 0.1)
                 bridge.replaceQueue(payload(0, a, c, b))
                 bridge.replaceQueue(payload(0, a, b, c))
-                waitFor("Rapid queue edits lost their final order") { it.optInt("index") == 0 && it.optString("key") == "fixture-a" && it.optBoolean("nextPrepared") && it.optString("nextKey") == "fixture-b" }
+                waitFor("Rapid queue edits lost their final order") { it.optInt("index") == 0 && it.optString("key") == "fixture-a" && it.optString("nextKey").isEmpty() }
                 bridge.command("toggle", "")
                 waitFor("Queue pause failed") { !it.optBoolean("playing") && !it.optBoolean("loading") }
                 bridge.command("seek", "2.4")
                 Thread.sleep(250)
                 bridge.command("toggle", "")
-                waitFor("Prepared Android handoff failed") { it.optString("key") == "fixture-b" && it.optBoolean("playing") && it.optInt("handoffs") >= 1 }
+                waitFor("Offline Android handoff failed") { it.optString("key") == "fixture-b" && it.optBoolean("playing") }
                 val duplicate = JSONObject(c.toString()).put("queueKey", "extra-c")
                 bridge.replaceQueue(payload(1, a, b, duplicate, c))
-                waitFor("An added song was not prepared to play next") { it.optString("key") == "fixture-b" && it.optBoolean("nextPrepared") && it.optString("nextKey") == "extra-c" }
+                waitFor("The added occurrence is missing from the queue") {
+                    it.optString("key") == "fixture-b" && JSONObject(PlaybackService.queueSnapshot).getJSONArray("tracks").optJSONObject(2)?.optString("queueKey") == "extra-c"
+                }
                 bridge.command("next", "")
-                waitFor("Skip did not use the prepared queue entry") { it.optString("key") == "extra-c" && it.optInt("index") == 2 && it.optBoolean("playing") && it.optInt("handoffs") >= 2 }
+                waitFor("Skip did not use the added occurrence") { it.optString("key") == "extra-c" && it.optInt("index") == 2 && it.optBoolean("playing") }
                 bridge.command("repeat", "one")
-                waitFor("Repeat did not prepare the same song") { it.optString("nextKey") == "extra-c" && it.optBoolean("nextPrepared") }
+                waitFor("Repeat one did not reach the offline player") { it.optString("repeat") == "one" && it.optString("nextKey").isEmpty() }
                 val previousSerial = JSONObject(PlaybackService.snapshot).getInt("serial")
                 bridge.command("seek", "2.6")
                 waitFor("Repeat handoff did not advance its playback identity") { it.optInt("serial") > previousSerial && it.optString("key") == "extra-c" && it.optBoolean("playing") }
@@ -129,15 +141,45 @@ class EngineInstrumentation : Instrumentation() {
         }.start()
     }
 
-    private fun waitFor(message: String, condition: (JSONObject) -> Boolean) {
+    private fun waitFor(message: String, interval: Long = 100L, condition: (JSONObject) -> Boolean) {
         val deadline = System.currentTimeMillis() + 45000
         do {
             val state = JSONObject(PlaybackService.snapshot)
             check(state.optString("error").isEmpty()) { state.optString("error") }
             if (condition(state)) return
-            Thread.sleep(100)
+            Thread.sleep(interval)
         } while (System.currentTimeMillis() < deadline)
         error(message + ": " + PlaybackService.snapshot)
+    }
+
+    private fun checkStreamingPreload(bridge: PlaybackBridge) {
+        val first = JSONObject().put("id", "monochrome:159277913216937984").put("remoteId", "159277913216937984")
+            .put("source", "monochrome").put("kind", "song").put("title", "Close Eyes").put("duration", 132).put("queueKey", "preload-from")
+        val next = JSONObject(first.toString()).put("queueKey", "preload-target")
+        bridge.loadQueue(JSONObject().put("tracks", JSONArray().put(first).put(next).put(fixture('f'))).put("index", 0)
+            .put("session", "preload-test").put("volume", 0).toString())
+        waitFor("The streaming fixture did not start") {
+            it.optString("session") == "preload-test" && it.optBoolean("playing") && it.optDouble("duration") > 20 && it.optDouble("position") > 0.5
+        }
+        val playing = JSONObject(PlaybackService.snapshot)
+        check(playing.optString("nextKey").isEmpty()) { "Preloading started more than ten seconds before the end" }
+        bridge.command("seek", (playing.getDouble("duration") - 8).toString())
+        waitFor("The last-ten-second preload did not start", interval = 15) { it.optString("nextKey") == "preload-target" }
+        val pending = JSONObject(PlaybackService.snapshot)
+        check(!pending.optBoolean("nextPrepared")) { "The stream was ready before the in-progress skip could be tested" }
+        check(pending.getDouble("duration") - pending.getDouble("position") in 0.0..10.0)
+        bridge.command("next", "")
+        waitFor("Next did not adopt the pending stream") {
+            it.optString("key") == "preload-target" && it.optInt("handoffs") == pending.optInt("handoffs") + 1 && it.optBoolean("playing")
+        }
+        val second = JSONObject(PlaybackService.snapshot)
+        bridge.command("seek", (second.getDouble("duration") - 6).toString())
+        waitFor("The next local track did not prepare during streaming") {
+            it.optString("key") == "preload-target" && it.optString("nextKey") == "fixture-f" && it.optBoolean("nextPrepared")
+        }
+        waitFor("Natural completion did not reuse the prepared track") {
+            it.optString("key") == "fixture-f" && it.optInt("handoffs") == second.optInt("handoffs") + 1 && it.optBoolean("playing")
+        }
     }
 
     private fun fixture(letter: Char): JSONObject {
@@ -158,9 +200,9 @@ class EngineInstrumentation : Instrumentation() {
             .put("tracks", JSONArray(entries.toList())).put("index", index).put("session", "shuffle-test")
             .put("volume", 0).put("shuffle", true).put("repeat", "off").toString()
         bridge.loadQueue(queue(1, original, copy))
-        waitFor("Shuffle did not prepare the other occurrence") {
+        waitFor("The offline shuffle did not start") {
             it.optString("session") == "shuffle-test" && it.optString("key") == "second-occurrence" &&
-                it.optString("nextKey") == "fixture-d" && it.optBoolean("nextPrepared")
+                it.optString("nextKey").isEmpty() && it.optBoolean("playing")
         }
         bridge.command("next", "")
         waitFor("Explicit Next did not use the shuffle order") {
@@ -168,15 +210,14 @@ class EngineInstrumentation : Instrumentation() {
         }
         bridge.command("previous", "")
         waitFor("Previous did not return to the first shuffled occurrence") {
-            it.optString("key") == "second-occurrence" && it.optBoolean("nextPrepared")
+            it.optString("key") == "second-occurrence" && it.optString("nextKey").isEmpty() && it.optBoolean("playing")
         }
         bridge.replaceQueue(queue(0, copy, original))
         waitFor("Reordering changed shuffle history or the current occurrence") {
-            it.optInt("index") == 0 && it.optString("key") == "second-occurrence" &&
-                it.optString("nextKey") == "fixture-d" && it.optBoolean("nextPrepared")
+            it.optInt("index") == 0 && it.optString("key") == "second-occurrence" && it.optString("nextKey").isEmpty()
         }
         bridge.command("seek", "2.6")
-        waitFor("Natural end did not promote the prepared occurrence") {
+        waitFor("Natural end did not start the next offline occurrence") {
             it.optString("key") == "fixture-d" && it.optBoolean("playing") && it.optInt("index") == 1
         }
         val finalSerial = JSONObject(PlaybackService.snapshot).getInt("serial")

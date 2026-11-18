@@ -67,7 +67,7 @@ Open the queue using its player button. On a small phone screen, expand Now play
 
 Use **+** or **Add to queue** to put a song first under **Up next**. On Android, swipe a song row right to do the same. Album pages can add an entire release, in album order, at the front of the queue. Adding or reordering turns shuffle off so the selected order is followed.
 
-The player prepares the following recording before the current one ends. Linux keeps its mpv audio process/output and advances its internal playlist; Android prepares a second native player and hands audio over through the media framework. Preloading follows queue edits, shuffle, repeat, and local-first source selection. Slow or unavailable streams can still delay a transition.
+On Linux, Windows, and Android, the player starts loading the next recording with about ten seconds left in a stream. **Next** uses that load if it is already in progress. Local playback skips preloading. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
 
 ## Build Linux
 

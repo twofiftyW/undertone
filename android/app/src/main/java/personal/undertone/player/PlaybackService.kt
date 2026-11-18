@@ -18,6 +18,7 @@ import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -79,13 +80,24 @@ class PlaybackService : Service() {
         @Synchronized fun takeQueue(id: String): String? = pendingQueues.remove(id)
         private const val CHANNEL = "undertone_playback"
         private const val NOTIFICATION = 14
+        private const val PRELOAD_WINDOW_MS = 10_000L
+    }
+
+    // The same load can move from the queue to the foreground while it is still resolving or buffering.
+    private class TrackLoad(val key: String) {
+        var media: MediaPlayer? = null
+        var streaming = false
+        var ready = false
+        var failed = false
     }
 
     private var tracks = JSONArray()
     private var index = -1
-    private var player: MediaPlayer? = null
-    private var prepared = false
-    private var loading = false
+    private var activeLoad: TrackLoad? = null
+    private var nextLoad: TrackLoad? = null
+    private val player get() = activeLoad?.media
+    private val prepared get() = activeLoad?.ready == true
+    private val loading get() = activeLoad?.ready == false
     private var wantsPlay = true
     private var shuffle = false
     private val playbackOrder = PlaybackOrder()
@@ -93,20 +105,15 @@ class PlaybackService : Service() {
     private var volume = 0.8f
     private var error = ""
     private var resumeAfterFocus = false
-    private var generation = 0
     private var sessionId = ""
     private var language = "en"
     private var serial = 0
     private var playedAt = 0L
-    private var nextPlayer: MediaPlayer? = null
-    private var nextReady = false
-    private var nextIndex = -1
-    private var nextKey = ""
-    private var nextTicket = 0
     private var handoffs = 0
     private var duck = 1f
     private val workers = Executors.newFixedThreadPool(2)
     private val handler = Handler(Looper.getMainLooper())
+    private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
     private lateinit var session: MediaSession
     private lateinit var audioManager: AudioManager
     private lateinit var focusRequest: AudioFocusRequest
@@ -183,8 +190,7 @@ class PlaybackService : Service() {
                             shuffle = payload.optBoolean("shuffle", shuffle)
                             updateOrder()
                             repeat = payload.optString("repeat", repeat)
-                            nextIndex = (0 until tracks.length()).firstOrNull { trackKey(it) == nextKey } ?: -1
-                            if (activeIndex == null) loadTrack() else prepareNext()
+                            if (activeIndex == null) loadTrack()
                         }
                         publishQueue()
                     }
@@ -194,8 +200,8 @@ class PlaybackService : Service() {
                 "previous" -> previous()
                 "seek" -> seek(((value.toDoubleOrNull() ?: 0.0) * 1000).toLong())
                 "volume" -> { volume = (value.toFloatOrNull() ?: volume).coerceIn(0f, 1f); applyVolume() }
-                "shuffle" -> { shuffle = value == "true"; updateOrder(); clearNext(); prepareNext() }
-                "repeat" -> { repeat = if (value in setOf("off", "one", "all")) value else "off"; clearNext(); prepareNext() }
+                "shuffle" -> { shuffle = value == "true"; updateOrder() }
+                "repeat" -> { repeat = if (value in setOf("off", "one", "all")) value else "off" }
                 "language" -> language = if (value == "ru") "ru" else "en"
                 "stop" -> { stopSelf(); return START_NOT_STICKY }
             }
@@ -212,48 +218,63 @@ class PlaybackService : Service() {
         return listOf("audio", "downloads").any { file.canonicalPath.startsWith(File(filesDir, it).canonicalPath + File.separator) } && file.isFile
     }
 
-    private fun loadTrack() {
+    private fun loadTrack(autoplay: Boolean = true) {
         if (index < 0 || index >= tracks.length()) return
         clearNext()
         player?.release()
-        player = null
-        prepared = false
-        loading = true
-        wantsPlay = true
+        val load = TrackLoad(trackKey(index))
+        activeLoad = load
+        beginTrack(autoplay)
+        resolveTrack(load, tracks.getJSONObject(index))
+        refresh()
+    }
+
+    private fun beginTrack(autoplay: Boolean) {
+        wantsPlay = autoplay
         error = ""
         serial++
         playedAt = 0
-        val track = tracks.getJSONObject(index)
         metadata()
-        val ticket = ++generation
+        publishQueue()
+    }
+
+    private fun resolveTrack(load: TrackLoad, track: JSONObject) {
         workers.execute {
             try {
                 val result = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track))
                 val uri = result.getString("url")
                 require(validSource(uri))
-                handler.post { if (ticket == generation && running) { try { prepareSource(uri) } catch (_: Exception) { fail("This audio stream couldn’t start. Try another recording.") } } }
-            } catch (error: Exception) {
-                handler.post { if (ticket == generation && running) fail(error.message ?: "This recording is unavailable. Check your connection and retry.") }
+                handler.post {
+                    if (load !== activeLoad && load !== nextLoad) return@post
+                    if (load === nextLoad && connectivity?.activeNetwork == null) { clearNext(); return@post }
+                    try { prepareSource(load, uri) }
+                    catch (_: Exception) { loadFailed(load, "This audio stream couldn’t start. Try another recording.") }
+                }
+            } catch (failure: Exception) {
+                handler.post { loadFailed(load, failure.message ?: "This recording is unavailable. Check your connection and retry.") }
             }
         }
-        publishQueue()
-        refresh()
     }
 
-    private fun prepareSource(uri: String) {
-        val next = newPlayer()
-        player = next
-        next.setOnPreparedListener {
-            if (player !== next) return@setOnPreparedListener
-            prepared = true
-            loading = false
-            if (wantsPlay) play()
-            prepareNext()
-            refresh()
+    private fun prepareSource(load: TrackLoad, uri: String) {
+        val media = newPlayer(load)
+        load.media = media
+        load.streaming = uri.startsWith("https://")
+        if (load === nextLoad) player?.audioSessionId?.takeIf { it > 0 }?.let { media.audioSessionId = it }
+        media.setOnPreparedListener {
+            if (load !== activeLoad && load !== nextLoad) return@setOnPreparedListener
+            load.ready = true
+            applyVolume()
+            if (load === activeLoad) {
+                if (wantsPlay) play() else refresh()
+            } else {
+                // The completion listener can start this same player if Android cannot link the pair.
+                try { player?.setNextMediaPlayer(media) } catch (_: IllegalStateException) { }
+                refresh(false)
+            }
         }
-        source(next, uri)
-        next.prepareAsync()
-        refresh()
+        source(media, uri)
+        media.prepareAsync()
     }
 
     private fun isPlaying(): Boolean = try { prepared && player?.isPlaying == true } catch (_: Exception) { false }
@@ -291,23 +312,27 @@ class PlaybackService : Service() {
         if (tracks.length() == 0) return
         val next = chooseNext(direction, ended)
         if (next < 0) { if (ended) pause(); return }
-        if (next == nextIndex && nextReady && nextPlayer != null) {
+        val autoplay = !ended || wantsPlay
+        val upcoming = nextLoad
+        if (upcoming != null && !upcoming.failed && upcoming.key == trackKey(next)) {
             val old = player
-            val promoted = nextPlayer!!
-            player = promoted; nextPlayer = null; nextReady = false
-            index = next; nextIndex = -1; nextKey = ""; nextTicket++
-            prepared = true; loading = false; error = ""; serial++; handoffs++
             try { old?.setNextMediaPlayer(null) } catch (_: IllegalStateException) { }
+            nextLoad = null
+            activeLoad = upcoming
             old?.release()
-            metadata(); publishQueue()
-            if (!ended) { wantsPlay = true; play() }
-            else if (wantsPlay) notePlaylist()
-            else if (promoted.isPlaying) promoted.pause()
-            prepareNext(); refresh()
+            index = next
+            handoffs++
+            beginTrack(autoplay)
+            if (prepared) {
+                if (wantsPlay && !isPlaying()) play()
+                else if (wantsPlay) notePlaylist()
+                else if (isPlaying()) player?.pause()
+            }
+            refresh()
             return
         }
         index = next
-        try { loadTrack() } catch (_: Exception) { fail("This track couldn’t start. Try another song.") }
+        try { loadTrack(autoplay) } catch (_: Exception) { fail("This track couldn’t start. Try another song.") }
     }
 
     private fun updateOrder() = playbackOrder.update((0 until tracks.length()).map(::trackKey), index, shuffle)
@@ -330,67 +355,55 @@ class PlaybackService : Service() {
     }
 
     private fun applyVolume() {
-        player?.setVolume(volume * duck, volume * duck)
-        nextPlayer?.setVolume(volume * duck, volume * duck)
+        if (prepared) player?.setVolume(volume * duck, volume * duck)
+        nextLoad?.takeIf { it.ready }?.media?.setVolume(volume * duck, volume * duck)
     }
 
     private fun source(target: MediaPlayer, uri: String) {
         if (uri.startsWith("https://")) target.setDataSource(this, Uri.parse(uri), mapOf("User-Agent" to "Undertone/${BuildConfig.VERSION_NAME}")) else target.setDataSource(uri)
     }
 
-    private fun newPlayer(): MediaPlayer = MediaPlayer().apply {
+    private fun newPlayer(load: TrackLoad): MediaPlayer = MediaPlayer().apply {
         setAudioAttributes(attributes)
         setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
         setVolume(volume * duck, volume * duck)
         setOnCompletionListener { if (player === this) advance(1, true) }
         setOnErrorListener { _, _, _ ->
-            if (player === this) fail("This stream or file is unavailable. Try another song.")
-            else if (nextPlayer === this) clearNext()
+            loadFailed(load, "This stream or file is unavailable. Try another song.")
             true
         }
     }
 
     private fun clearNext() {
-        nextTicket++
+        val upcoming = nextLoad ?: return
+        nextLoad = null
         try { player?.setNextMediaPlayer(null) } catch (_: IllegalStateException) { }
-        nextPlayer?.release(); nextPlayer = null; nextReady = false
-        nextIndex = -1; nextKey = ""
+        upcoming.media?.release()
     }
 
-    private fun prepareNext() {
-        val current = player ?: return
-        if (!prepared) return
+    private fun prepareNext(playing: Boolean, position: Long, duration: Long) {
+        if (activeLoad?.streaming != true) return
+        val inWindow = playing && duration - position in 1L..PRELOAD_WINDOW_MS
+        if (nextLoad == null && !inWindow) return
+        if (connectivity?.activeNetwork == null) { clearNext(); return }
         val upcoming = chooseNext(1, true)
-        if (upcoming < 0) { clearNext(); return }
         val key = trackKey(upcoming)
-        if (key == nextKey && nextIndex >= 0) { nextIndex = upcoming; return }
-        clearNext()
-        nextIndex = upcoming; nextKey = key
-        val ticket = nextTicket
-        val track = tracks.getJSONObject(upcoming)
-        workers.execute {
-            try {
-                val uri = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track)).getString("url")
-                require(validSource(uri))
-                handler.post {
-                    if (ticket != nextTicket || player !== current || !running) return@post
-                    try {
-                        val staged = newPlayer()
-                        nextPlayer = staged
-                        if (current.audioSessionId > 0) staged.audioSessionId = current.audioSessionId
-                        staged.setOnPreparedListener {
-                            if (ticket != nextTicket || nextPlayer !== staged || player !== current) return@setOnPreparedListener
-                            try {
-                                current.setNextMediaPlayer(staged)
-                                nextReady = true
-                                refresh(false)
-                            } catch (_: IllegalStateException) { clearNext() }
-                        }
-                        source(staged, uri)
-                        staged.prepareAsync()
-                    } catch (_: Exception) { clearNext() }
-                }
-            } catch (_: Exception) { handler.post { if (ticket == nextTicket) clearNext() } }
+        if (nextLoad?.key != key) clearNext()
+        if (key.isEmpty() || nextLoad != null || !inWindow) return
+        val load = TrackLoad(key)
+        nextLoad = load
+        resolveTrack(load, tracks.getJSONObject(upcoming))
+    }
+
+    private fun loadFailed(load: TrackLoad, message: String) {
+        if (activeLoad === load) fail(message)
+        else if (nextLoad === load) {
+            try { player?.setNextMediaPlayer(null) } catch (_: IllegalStateException) { }
+            load.media?.release()
+            load.media = null
+            load.ready = false
+            // The foreground can retry this recording without reissuing a request on every tick.
+            load.failed = true
         }
     }
 
@@ -398,9 +411,7 @@ class PlaybackService : Service() {
         clearNext()
         error = message
         player?.release()
-        player = null
-        prepared = false
-        loading = false
+        activeLoad = null
         wantsPlay = false
         audioManager.abandonAudioFocusRequest(focusRequest)
         refresh()
@@ -413,7 +424,10 @@ class PlaybackService : Service() {
     private fun refresh(notify: Boolean = true) {
         val playing = isPlaying()
         val pos = position()
-        snapshot = JSONObject().put("index", index).put("key", trackKey(index)).put("session", sessionId).put("serial", serial).put("playedAt", playedAt).put("nextKey", nextKey).put("nextPrepared", nextReady).put("handoffs", handoffs).put("playing", playing).put("loading", loading).put("position", pos / 1000.0).put("duration", duration() / 1000.0).put("shuffle", shuffle).put("repeat", repeat).put("error", error).toString()
+        val length = duration()
+        prepareNext(playing, pos, length)
+        val upcoming = nextLoad?.takeUnless { it.failed }
+        snapshot = JSONObject().put("index", index).put("key", trackKey(index)).put("session", sessionId).put("serial", serial).put("playedAt", playedAt).put("nextKey", upcoming?.key.orEmpty()).put("nextPrepared", upcoming?.ready == true).put("handoffs", handoffs).put("playing", playing).put("loading", loading).put("position", pos / 1000.0).put("duration", length / 1000.0).put("shuffle", shuffle).put("repeat", repeat).put("error", error).toString()
         val state = if (loading) PlaybackState.STATE_BUFFERING else if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
         session.setPlaybackState(PlaybackState.Builder().setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_STOP).setState(state, pos, if (playing) 1f else 0f).build())
         if (notify && index >= 0) getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification())
@@ -432,11 +446,10 @@ class PlaybackService : Service() {
 
     override fun onDestroy() {
         clearNext()
-        generation++
         workers.shutdownNow()
         handler.removeCallbacksAndMessages(null)
         player?.release()
-        player = null
+        activeLoad = null
         audioManager.abandonAudioFocusRequest(focusRequest)
         session.isActive = false
         session.release()
