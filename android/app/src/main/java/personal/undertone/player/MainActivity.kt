@@ -18,13 +18,16 @@ import android.webkit.WebViewClient
 import android.view.WindowInsets
 import android.widget.FrameLayout
 import androidx.webkit.WebViewAssetLoader
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.net.NetworkInterface
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    private lateinit var phoneDiscovery: PhoneDiscovery
     private var chooser: ValueCallback<Array<Uri>>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,9 +65,11 @@ class MainActivity : Activity() {
             }
         }
         // A fixed local origin and blocked document navigation keep the bridges private.
-        webView.addJavascriptInterface(DeviceBridge(this) { id, reply ->
+        val deviceBridge = DeviceBridge(this) { id, reply ->
             webView.post { if (!isFinishing && !isDestroyed) webView.evaluateJavascript("window.__undertoneReply?.(" + JSONObject.quote(id) + "," + reply + ")", null) }
-        }, "UndertoneDevice")
+        }
+        phoneDiscovery = deviceBridge.phoneDiscovery
+        webView.addJavascriptInterface(deviceBridge, "UndertoneDevice")
         webView.addJavascriptInterface(PlaybackBridge(applicationContext), "UndertoneAudio")
         val frame = FrameLayout(this)
         frame.setBackgroundColor(Color.rgb(17, 20, 19))
@@ -90,10 +95,13 @@ class MainActivity : Activity() {
         chooser = null
     }
 
-    override fun onDestroy() { chooser?.onReceiveValue(null); webView.destroy(); super.onDestroy() }
+    override fun onStart() { super.onStart(); phoneDiscovery.setForeground(true) }
+    override fun onStop() { phoneDiscovery.setForeground(false); super.onStop() }
+    override fun onDestroy() { phoneDiscovery.destroy(); chooser?.onReceiveValue(null); webView.destroy(); super.onDestroy() }
 }
 
 class DeviceBridge(private val context: Context, private val callback: (String, String) -> Unit) {
+    val phoneDiscovery = PhoneDiscovery(context.applicationContext)
     private val workers = Executors.newFixedThreadPool(3)
     private val directory = File(context.filesDir, "audio").apply { mkdirs() }
     private fun file(id: String): File {
@@ -102,10 +110,31 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     }
     private fun reply(operation: () -> Any?): String = try { JSONObject().put("data", operation() ?: JSONObject.NULL).toString() } catch (_: Exception) { JSONObject().put("error", "Could not access app storage. Check free space and restart the app.").toString() }
 
+    private fun discoveryArgs(): String {
+        val broadcasts = linkedSetOf("255.255.255.255")
+        // A subnet broadcast also reaches Wi-Fi when another interface has the default route.
+        runCatching {
+            for (network in NetworkInterface.getNetworkInterfaces().asSequence()) {
+                if (!network.isUp || network.isLoopback || network.isPointToPoint) continue
+                for (entry in network.interfaceAddresses) {
+                    if (entry.address.isSiteLocalAddress || entry.address.isLinkLocalAddress) {
+                        entry.broadcast?.hostAddress?.let { broadcasts.add(it) }
+                    }
+                }
+            }
+        }
+        return JSONObject().put("broadcasts", JSONArray(broadcasts)).toString()
+    }
+
     @JavascriptInterface fun request(id: String, operation: String, args: String) {
-        if (!Regex("[a-z0-9-]{1,60}").matches(id) || operation !in setOf("music", "list_downloads", "offline_file", "download_track", "remove_download", "parse_spotify", "link_status", "link_pair", "link_forget", "link_pull") || args.length > 1024 * 1024) return
+        if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 1024 * 1024) return
+        if (operation in PhoneDiscovery.operations) {
+            phoneDiscovery.request(operation, args) { response -> callback(id, response) }
+            return
+        }
+        if (operation !in setOf("music", "list_downloads", "offline_file", "download_track", "remove_download", "parse_spotify", "link_status", "link_discover", "link_pair", "link_forget", "link_pull")) return
         workers.execute {
-            val response = try { Engine.reply(context, operation, args) } catch (_: Exception) { JSONObject().put("error", "The music engine could not start. Restart Undertone and try again.").toString() }
+            val response = try { Engine.reply(context, operation, if (operation == "link_discover") discoveryArgs() else args) } catch (_: Exception) { JSONObject().put("error", "The music engine could not start. Restart Undertone and try again.").toString() }
             callback(id, response)
         }
     }

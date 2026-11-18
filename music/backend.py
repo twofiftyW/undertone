@@ -211,6 +211,11 @@ def dispatch(operation, args):
     query = str(args.get("query") or "").strip()[:300]
     ident = str(args.get("id") or args.get("seed") or "")
     force = bool(args.get("force"))
+    if operation in ('link_discover_phones', 'link_invite_phone'):
+        import device_sync
+        if operation == 'link_discover_phones':
+            return device_sync.discover_phones()
+        return device_sync.invite_phone(args.get('address'), ident)
     if operation == "download":
         import offline
         return offline.download(ident, str(args.get('source') or 'monochrome'))

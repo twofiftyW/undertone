@@ -71,6 +71,7 @@ npm test
 python3 tests/music_test.py
 python3 tests/features_test.py
 python3 tests/v05_test.py
+python3 tests/discovery_test.py
 python3 scripts/build_linux.py
 ./install-linux.sh
 ```
@@ -86,16 +87,17 @@ Install the signed **dist/android/Undertone-0.0.2-alpha.apk** on your phone. Tra
 To copy your PC library:
 
 1. Put phone and PC on the **same Wi-Fi**. Keep both apps open while copying.
-2. On Linux or Windows, open **Library → Connect phone → Enable phone connection**. The sidebar’s **Connect devices** opens the same dialog.
-3. On Android, open **Library → Connect PC**. Enter the PC address and full pairing code, then tap **Pair with PC**.
-4. Tap **Copy from PC**. Leave **Copy saved audio for offline listening** checked to copy completed downloads and imported files, or uncheck it to copy playlists/metadata only.
-5. After completion, copied audio plays from phone storage even with Wi-Fi off. To refresh later, enable the PC connection and tap **Copy from PC** again. The phone remembers its paired PC.
+2. On Android, open **Library → Connect PC**. Keep this dialog on screen to make the phone visible to computers. It also searches for available PCs.
+3. On Linux or Windows, open **Library → Connect phone → Enable phone connection**. The PC searches for phones automatically. Select your phone by name and address and send it an invitation. The sidebar’s **Connect devices** opens the same dialog.
+4. On your phone, select the inviting PC or choose a computer directly from the list. Enter the full pairing code shown on that PC and tap **Pair with PC**. You can refresh either device list. If discovery is blocked, select manual entry on the phone and use the PC address shown on its screen.
+5. Tap **Copy from PC**. Leave **Copy saved audio for offline listening** checked to copy completed downloads and imported files, or uncheck it to copy playlists and metadata only.
+6. The phone remembers its paired PC and can play copied audio offline. To refresh later, enable the PC connection and tap **Copy from PC** again. To switch computers, choose another PC in the same dialog and enter its pairing code.
 
 Copying adds PC Liked Songs and updates copies of the PC playlists while keeping phone-only collections. Repeated entries and track order remain intact. Songs only liked or put in a playlist on the PC are metadata until downloaded; complete downloads and imported audio are the files copied. Matching completed audio files are skipped on repeat copies. Transfers are size- and SHA-256-checked before an atomic rename. An interrupted copy preserves previous files and the phone library; retry to continue with already completed files skipped. This is a manual one-way PC-to-phone copy, not cloud or two-way live sync.
 
-The PC connection is opt-in, stops when the app closes, and must be enabled again after reopening. It uses pinned TLS on local TCP **47832**, a one-use ten-minute pairing PIN, saved device tokens, and LAN-only requests. **Forget paired phones** revokes PC access; **Forget PC** on Android removes its saved link. No other folders are shared.
+While the PC connection is enabled, Undertone answers local discovery requests on UDP **47832** with the computer name. Android answers searches and receives invitations on UDP **47833** while its connection dialog is visible. The PC receives search replies on UDP **47834**. Accepting an invitation selects a PC in the pairing form. Pairing and library transfers use pinned TLS on TCP **47832**, a one-use ten-minute pairing PIN, and saved device tokens. Use **New pairing code** on the PC if the previous code has expired or has already paired a phone. Closing Undertone on the PC stops sharing until you enable it again. **Forget paired phones** revokes PC access. **Forget PC** on Android removes its saved link.
 
-This computer has UFW enabled. If the phone cannot connect, click **Allow phone through firewall** in the PC connection dialog and approve Linux’s system password prompt. That button allows only TCP 47832 from the PC’s private local subnet. You can also configure this rule in your firewall settings. The rule does not start the connection by itself. On Windows, allow the packaged Python runtime on private networks if Windows Firewall asks.
+If UFW is enabled on Linux and either device cannot find the other, click **Allow phone through firewall** in the PC connection dialog and approve the system prompts. This allows TCP/UDP 47832 and UDP 47834 from the PC’s private local subnet. On Windows, allow the packaged Python runtime on private networks if Windows Firewall asks. On Wi-Fi networks that block broadcast discovery, use the PC address shown in the dialog.
 
 Build Android with `python3 scripts/android_setup.py` once, then `python3 scripts/build_android.py`. Gradle builds and lints the release, aligns it, signs it locally, and verifies the signature. The app embeds the same Python music modules using Chaquopy; no Python install is needed on the phone. Android’s YouTube extraction has no bundled external JavaScript executable, so availability may differ from the Linux yt-dlp/Deno setup.
 

@@ -470,6 +470,11 @@ test('Android requests return asynchronously, carry provider arguments, and expo
     assert.deepEqual(result, { operation: 'music', args: { operation: 'search', args: { query: 'DVRST' } } });
     const download = await runtime.nativeRuntime.invoke('download_track', { id: 'ao4RCon11eY', source: 'youtube' });
     assert.equal(download.args.source, 'youtube');
+    assert.deepEqual(await runtime.nativeRuntime.invoke('link_discover'), { operation: 'link_discover', args: {} });
+    for (const operation of ['link_phone_start', 'link_phone_status', 'link_phone_stop']) {
+      const args = { session: 'visible-dialog' };
+      assert.deepEqual(await runtime.nativeRuntime.invoke(operation, args), { operation, args });
+    }
     await assert.rejects(runtime.nativeRuntime.invoke('remove_download', { id: 'ao4RCon11eY', source: 'youtube' }), /Storage unavailable/);
   } finally { globalThis.window = originalWindow; }
 });
