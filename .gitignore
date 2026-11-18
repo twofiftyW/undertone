@@ -1,0 +1,14 @@
+node_modules/
+.tools/
+.private/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+__pycache__/
+android/.gradle/
+android/app/build/
+android/build/
+android/.kotlin/
+android/local.properties
+music/vendor/
