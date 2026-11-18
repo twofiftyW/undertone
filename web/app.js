@@ -799,6 +799,21 @@ function closeDialog() { dialog.dataset.kind = ""; dialog.close(); }
 function openDialog(content, kind = "") { dialog.dataset.kind = kind; dialog.innerHTML = content; if (!dialog.open) dialog.showModal(); }
 function dialogTop(title) { return `<div class="dialog-top"><h2 id="dialog-title">${h(title)}</h2><button class="icon-btn" data-action="close-dialog" aria-label="${h(tr("Close dialog"))}">${icon("close")}</button></div>`; }
 
+function appearanceDialog() {
+  const currentTheme = document.documentElement.dataset.theme;
+  const choices = Object.entries(window.undertoneAppearance.names).map(([id, name]) => `
+    <label class="theme-choice">
+      <input type="radio" name="theme" value="${id}" ${id === currentTheme ? 'checked autofocus' : ''}>
+      <span class="theme-card">
+        <span class="theme-preview" data-theme-preview="${id}" aria-hidden="true">
+          <span class="theme-sleeve">${icon('disc')}</span><span class="theme-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </span>
+        <span class="theme-label">${h(tr(name))}${icon('check')}</span>
+      </span>
+    </label>`).join('');
+  openDialog(`${dialogTop(tr('Appearance'))}<div class="theme-choices" role="radiogroup" aria-labelledby="dialog-title">${choices}</div>`, 'appearance');
+}
+
 function languageDialog() {
   const currentLanguage = appLanguage();
   openDialog(`${dialogTop(tr('App language'))}<div class="dialog-menu">${[['en', 'English'], ['ru', 'Русский']].map(([lang, name]) => `<button class="menu-item" data-action="set-language" data-lang="${lang}" lang="${lang}" aria-pressed="${lang === currentLanguage}">${name}${lang === currentLanguage ? icon('check') : ''}</button>`).join('')}</div>`, 'language');
@@ -842,7 +857,7 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img src="./icon.svg" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone 0.0.2-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
+  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><svg width="44" height="44" aria-hidden="true"><use href="#brand-mark"/></svg><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone 0.0.3-alpha · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
 async function metadata(file) {
@@ -1232,6 +1247,7 @@ const link = deviceLink({ native, android: !!nativeAudio, platform, openDialog, 
 
 const actions = {
   ...link.actions,
+  appearance: appearanceDialog,
   language: languageDialog,
   'set-language': button => changeLanguage(button.dataset.lang),
   'search-youtube': async () => { const ticket = requestId; toast(tr("Checking YouTube for more recordings…")); const result = await musicRequest('fallback', { query, artists: searchData.artists }); if (ticket !== requestId) return; registerCatalog(result); searchData.tracks = rankTracks([...searchData.tracks, ...result.tracks], query); searchData.notice = result.tracks.length ? "YouTube song results added. Each row shows its source." : "No additional YouTube recordings were available."; render(); },
@@ -1400,6 +1416,7 @@ $("#clear-search").addEventListener("click", () => { clearTimeout(searchTimer); 
 $("#file-input").addEventListener("change", (event) => importFiles(event.target.files));
 $("#spotify-file-input").addEventListener("change", event => { const files = [...event.target.files]; event.target.value = ""; if (files.length) readSpotifyFiles(files); });
 document.addEventListener("change", (event) => {
+  if (event.target.name === 'theme' && event.target.checked) window.undertoneAppearance.select(event.target.value);
   if (event.target.dataset.spotifySelected !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifySelected)]; if (item) item.selected = event.target.checked; }
   if (event.target.dataset.spotifyKind !== undefined && spotifyState) { const item = spotifyState.collections[Number(event.target.dataset.spotifyKind)]; if (item && ["playlist", "liked"].includes(event.target.value)) item.kind = event.target.value; }
   if (event.target.id === "sort") { sort = event.target.value; render(); }

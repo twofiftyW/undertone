@@ -42,7 +42,7 @@ if __name__ == "__main__":
     build_tools = TOOLS / "android-sdk/build-tools/35.0.0"
     unsigned = ROOT / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
     aligned = TOOLS / "android-aligned.apk"
-    output = ROOT / "dist/android/Undertone-0.0.2-alpha.apk"
+    output = ROOT / "dist/android/Undertone-0.0.3-alpha.apk"
     output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([str(build_tools / "zipalign"), "-P", "16", "-f", "4", str(unsigned), str(aligned)], env=env, check=True)
     subprocess.run([str(build_tools / "apksigner"), "sign", "--ks", str(keystore), "--ks-key-alias", "undertone", "--ks-pass", "env:UNDERTONE_SIGNING_PASSWORD", "--out", str(output), str(aligned)], env=env, check=True)
