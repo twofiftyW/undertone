@@ -8,6 +8,7 @@ import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyC
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
 import { TrackWindows } from './track-window.js';
+import { appUpdates } from './updates.js';
 import { swipeToQueue } from './swipe.js';
 import { appLanguage, setLanguage, tr, countLabel, translateStatic } from './i18n.js';
 
@@ -802,7 +803,7 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
   index = selected.index;
   if (!list.length) { toast(tr("These songs still need a recording. Choose one from a song’s menu.")); return; }
   if (index < 0) index = 0;
-  queue = queueEntries(list, playlistId);
+  queue = queueEntries(existingQueue ? list : list.map(({ queueKey, manuallyQueued, ...track }) => track), playlistId);
   queueIndex = index;
   current = queue[index];
   if (shuffle && !nativeAudio && (!existingQueue || !shuffleOrder.length)) {
@@ -928,7 +929,7 @@ function syncQueue() {
 }
 
 function enqueueTracks(list) {
-  const added = queueEntries(list);
+  const added = queueEntries(list.map(track => ({ ...track, queueKey: undefined })));
   if (!added.length) { toast(tr("Choose a recording for this song first.")); return; }
   added.forEach(remember);
   const inserted = insertUpNext(queue, queueIndex, added, Boolean(queueSession && current));
@@ -938,7 +939,7 @@ function enqueueTracks(list) {
   const wasShuffled = shuffle;
   if (shuffle) { shuffle = false; updateModes(); }
   syncQueue();
-  toast(wasShuffled ? tr("Added to play next. Shuffle turned off.") : tr("Added to play next."));
+  toast(wasShuffled ? tr("Added to queue. Shuffle turned off.") : tr("Added to queue."));
 }
 
 function reorderQueue(from, to) {
@@ -1063,8 +1064,9 @@ async function addTrackToPlaylist(playlistId, trackId) {
 }
 
 function about() {
-  const version = nativeAudio ? window.UndertoneDevice.appVersion() : "0.0.7-alpha";
-  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div><div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
+  const version = updates?.version || "0.0.8";
+  const settings = updates ? `<button class="secondary-btn" data-action="update-settings">${h(tr("Update settings"))}</button>` : '';
+  openDialog(`${dialogTop(tr("A space of your own."))}<div class="about-brand"><img data-app-icon src="${appIconPath()}" width="44" height="44" alt=""><h2>undertone.</h2></div>${settings}<div class="about-list"><div><strong>${h(tr("Music, with less noise."))}</strong>${h(tr("No app account, ads, or subscription."))}</div><div><strong>${h(tr("Search Monochrome."))}</strong>${h(tr("Songs, artists, albums, and release tracks come from its public Tracks catalog."))}</div><div><strong>${h(tr("YouTube when a song is missing."))}</strong>${h(tr("Search and Spotify matching try YouTube if Monochrome has no match. Music videos have their own tab."))}</div><div><strong>${h(tr("Artist mixes."))}</strong>${h(tr("Your listening and likes choose an artist, then mix more of their catalog. This source doesn’t currently provide similar-artist recommendations."))}</div><div><strong>${h(tr("Sound that follows your computer."))}</strong>${h(tr("Undertone has its own volume channel and uses your system’s default output."))}</div><div><strong>${h(tr("Listen offline."))}</strong>${h(tr("Download songs, albums, or playlists. Saved audio is used before an internet stream."))}</div><div><strong>${h(tr("Bring your Spotify library."))}</strong>${h(tr("Import playlists and Liked Songs from account-data JSON/ZIP files or playlist CSVs. Unmatched songs stay visible for review."))}</div><div><strong>${h(tr("Your collection stays yours."))}</strong>${h(tr("Imported files, downloads, and your library stay on this device. Connect your phone and PC to copy them over Wi-Fi."))}</div><div><strong>${h(tr("A few shortcuts."))}</strong>${h(tr("Space to play or pause. / to search. M to mute."))}</div></div><p class="about-version">Undertone Alpha ${h(version)} · ${nativeAudio ? "Android" : platform === "windows" ? "Windows" : "Linux"}</p>`);
 }
 
 async function metadata(file) {
@@ -1678,7 +1680,10 @@ const link = deviceLink({ native, android: !!nativeAudio, platform, openDialog, 
   render();
 } });
 
+const updates = deviceStorage ? appUpdates({ native, dialog, openDialog, closeDialog, dialogTop, toast, flush: () => saveChain }) : null;
+
 const actions = {
+  ...updates?.actions,
   ...link.actions,
   appearance: appearanceDialog,
   language: languageDialog,
@@ -2081,3 +2086,5 @@ updateModes();
 updateVolume();
 render();
 loadCatalog();
+
+updates?.start();

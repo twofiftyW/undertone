@@ -367,3 +367,11 @@ dialog[data-kind="spotify"],dialog[data-kind="spotify-match"] { width:min(680px,
 .android-app .track-row.swipe-ready::before { background:var(--accent); color:var(--on-accent); }
 .language-button { color:var(--muted); padding:8px 6px; font-size:12px; }
 .language-button:hover, .language-button:focus-visible { color:var(--accent); }
+
+.update-available { flex-shrink:0; padding:8px 11px; border-radius:8px; background:var(--accent-tint); color:var(--accent); border:1px solid var(--accent-border); font-size:12px; font-weight:650; white-space:nowrap; }
+.update-available:hover { background:var(--accent); color:var(--on-accent); }
+.update-choice { display:flex; align-items:center; gap:9px; margin:12px 0; font-size:13px; color:var(--secondary); }
+.update-choice input { accent-color:var(--accent); }
+.update-access { display:grid; gap:8px; padding:14px 0; border-top:1px solid var(--line); }
+.update-access label { color:var(--secondary); font-size:13px; }
+.update-access input { width:100%; padding:10px; background:var(--panel); border:1px solid var(--border); border-radius:8px; color:var(--text); }

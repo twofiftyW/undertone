@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    internal val updates by lazy { AppUpdates(this) }
     private lateinit var phoneDiscovery: PhoneDiscovery
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var unregisterBackCallback: (() -> Unit)? = null
@@ -138,6 +139,10 @@ class MainActivity : Activity() {
     @Deprecated("Legacy result API remains available on Android 8+")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == AppUpdates.INSTALL_PERMISSION) {
+            updates.permissionResult()
+            return
+        }
         if (requestCode != 41) return
         val files = if (resultCode != RESULT_OK || data == null) null else data.clipData?.let { clips -> Array(clips.itemCount) { clips.getItemAt(it).uri } } ?: data.data?.let { arrayOf(it) }
         chooser?.onReceiveValue(files)
@@ -149,6 +154,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         unregisterBackCallback?.invoke()
         phoneDiscovery.destroy()
+        updates.destroy()
         chooser?.onReceiveValue(null)
         webView.destroy()
         super.onDestroy()
@@ -187,6 +193,10 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
 
     @JavascriptInterface fun request(id: String, operation: String, args: String) {
         if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 1024 * 1024) return
+        if (operation == "app_update") {
+            (context as? MainActivity)?.updates?.request(args) { response -> callback(id, response) }
+            return
+        }
         if (operation in setOf("spotify_job_start", "spotify_job_resume") || (operation == "spotify_job_pause" && SpotifyImportService.active)) {
             SpotifyImportService.command(context, operation, args) { response -> callback(id, response) }
             if (operation != "spotify_job_pause") (context as? MainActivity)?.requestImportNotifications()

@@ -45,7 +45,7 @@ def package(runtime, vendor):
         music.mkdir(parents=True)
         shutil.copy2(release, folder / "Undertone.exe")
         for name in ("backend.py", "monochrome.py", "offline.py", "spotify_import.py", "spotify_job.py",
-                     "desktop_spotify.py", "desktop_import_notification.py", "device_sync.py"):
+                     "desktop_spotify.py", "desktop_import_notification.py", "device_sync.py", "updates.py"):
             shutil.copy2(ROOT / "music" / name, music / name)
         shutil.copytree(runtime, music / "python")
         shutil.copytree(vendor, music / "vendor", ignore=shutil.ignore_patterns("__pycache__", "bin"))

@@ -29,19 +29,23 @@ pub fn python_command(backend: &std::path::Path) -> std::process::Command {
 }
 
 pub async fn engine(app: &tauri::AppHandle, operation: &str, args: Value, timeout: Duration) -> Result<Value, String> {
-    let backend = backend_path(app)?;
+    let script = backend_path(app)?;
+    python_request(app, &script, serde_json::json!({ "operation": operation, "args": args }), timeout).await
+}
+
+pub async fn python_request(app: &tauri::AppHandle, script: &std::path::Path, data: Value, timeout: Duration) -> Result<Value, String> {
     let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("music");
     let downloads = app.path().app_data_dir().map_err(|e| e.to_string())?.join("downloads");
-    let mut child = Command::from(python_command(&backend))
+    let mut child = Command::from(python_command(script))
         .args(["-X", "utf8", "-B"])
-        .arg(backend)
+        .arg(script)
         .env("UNDERTONE_CACHE_DIR", cache)
         .env("UNDERTONE_DOWNLOAD_DIR", downloads)
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn().map_err(|_| "The music engine could not start. Check that Python is available.".to_string())?;
-    let input = serde_json::to_vec(&serde_json::json!({ "operation": operation, "args": args })).map_err(|e| e.to_string())?;
+    let input = serde_json::to_vec(&data).map_err(|e| e.to_string())?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&input).await.map_err(|e| e.to_string())?;
     }

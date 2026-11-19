@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.7-alpha** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.8** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone Alpha from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Install Undertone Alpha 0.0.7-alpha over 0.0.6-alpha to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **Android:** Install Undertone Alpha 0.0.8 over 0.0.7-alpha to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
 
 Large collections keep their full scroll range on all three platforms. The app renders the visible tracks and nearby rows as you scroll.
 
@@ -21,6 +21,12 @@ Open **Appearance** in the top bar (the palette icon in a narrow window) to choo
 The app icon follows the theme by default. Clear **Sync with theme** under **App icon** to choose a different icon, such as a green icon with Midnight blue. Turning sync back on applies the current theme’s icon immediately. Your manual choice is available again the next time you turn sync off. On Android the icon appears in the app launcher. On Windows it appears on the window and the `Undertone Alpha.lnk` shortcut beside the portable executable. On Linux it appears on the window and in the launcher after installation with `install-linux.sh`.
 
 Keep the entire `dist/linux/` directory together: the executable needs `music/`. System requirements are Python 3, mpv, yt-dlp, Deno, OpenSSL, iproute2, WebKitGTK 4.1, GTK 3, audio support, and the desktop’s session D-Bus. These are present on the development computer. Catalog Python dependencies are bundled.
+
+## Updates
+
+Install 0.0.8 once to get the in-app updater. Open the avatar menu and choose **Update settings**. Create a [fine-grained GitHub access token](https://github.com/settings/personal-access-tokens/new) scoped to `twofiftyW/undertone` with read access to **Contents**, then save it in Update settings on each device. Access tokens are stored separately from your library and device sync.
+
+Undertone checks the project's published releases at startup and while open. Choose **Install update** to download and install the build for your device, or **Later** to leave an **Update available** button in the top bar. **Do not show again** hides future prompts and can be turned off in Update settings. Desktop updates restart the app. On Android, allow Undertone to install apps when prompted and confirm in the Android installer if the system asks.
 
 ## Download music for offline playback
 
@@ -75,7 +81,7 @@ Open the queue using its player button. On a small phone screen, expand Now play
 
 Use **+** or **Add to queue** to put a song first under **Up next**. On Android, swipe a song row right to do the same. Album pages can add an entire release, in album order, at the front of the queue. Adding or reordering turns shuffle off so the selected order is followed.
 
-On Linux, Windows, and Android, the player starts loading the next recording with about ten seconds left in a stream. **Next** uses that load if it is already in progress. Local playback skips preloading. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
+On Linux, Windows, and Android, the player starts loading the next recording with about ten seconds left in a stream. **Next** uses that load if it is already in progress. Local playback skips preloading. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
 
 ## Build Linux
 
@@ -119,6 +125,6 @@ To build the Android release, run `python3 scripts/android_setup.py` once. Set `
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.7-alpha-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.8-windows-x64.zip`.
 
 The expected Android signing certificate SHA-256 is `ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb`. The build helper also reads the original keystore from `.private/android-signing.p12` and the password from `.private/android-signing-password`. Git ignores the `.private` directory. Restrict access to it to the Windows account or Unix user that signs the release. User libraries and downloaded music are stored separately from the app.

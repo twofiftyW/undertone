@@ -9,6 +9,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.WebView
+import com.chaquo.python.Python
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -26,6 +27,26 @@ class EngineInstrumentation : Instrumentation() {
             val results = Bundle()
             try {
                 val context = targetContext
+                if (arguments.getString("update_only") == "true") {
+                    Engine.update(context, "status", "")
+                    val python = Python.getInstance()
+                    val updates = python.getModule("updates")
+                    val builtins = python.getModule("builtins")
+                    builtins.callAttr("setattr", updates, "fixture_apk", context.cacheDir.resolve("fixture-update.apk").path)
+                    builtins.callAttr("exec", """
+                        def latest_release(session, token, current, platform):
+                            return {"version": "0.0.9"}
+
+                        def download_release(session, token, offer, destination):
+                            shutil.copyfile(fixture_apk, destination)
+                    """.trimIndent(), updates["__dict__"])
+                    val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    try { checkAppUi(activity, "") }
+                    finally { runOnMainSync { activity.finish() } }
+                    results.putString("result", "PASS: update prompt, decline, saved preference and settings")
+                    finish(Activity.RESULT_OK, results)
+                    return@Thread
+                }
                 if (arguments.getString("playlist_search_only") == "true") {
                     val night = fixture('a').put("title", "Night Drive").put("artist", "Moon Unit")
                     val morning = fixture('b').put("title", "Morning News").put("artist", "Daylight")
@@ -267,6 +288,10 @@ class EngineInstrumentation : Instrumentation() {
             }
         }
         await("App did not start", "document.body.classList.contains('android-app') && !!document.querySelector('.home-heading')")
+        if (arguments.getString("update_only") == "true") {
+            checkUpdatePrompt(js = ::js, await = ::await, reload = { runOnMainSync { web.reload() } })
+            return
+        }
         if (arguments.getString("playlist_search_only") == "true") {
             checkPlaylistSearch(::js, ::await)
             return
@@ -318,6 +343,29 @@ class EngineInstrumentation : Instrumentation() {
         val expected = JSONObject.quote(title)
         await("Full right swipe failed. Events: ${js("window.swipeEvents.slice(-12)")}", "document.querySelectorAll('.queue-item').length === 1 && document.querySelector('.queue-item strong').textContent === $expected")
         check(js("document.querySelector('#play-pause').getAttribute('aria-label')") == JSONObject.quote("Воспроизвести")) { "Swiping started playback" }
+    }
+
+    private fun checkUpdatePrompt(js: (String) -> String, await: (String, String) -> Unit, reload: () -> Unit) {
+        await("The update prompt did not open at startup", "!!document.querySelector('#dialog[open] [data-action=update-install]')")
+        js("document.querySelector('#update-skip').click(); document.querySelector('[data-action=update-later]').click()")
+        await("Declining did not leave the update button", "document.querySelector('#update-available').offsetWidth > 0 && !document.querySelector('#dialog').open")
+        val previousPage = js("performance.timeOrigin")
+        reload()
+        await("The update preference did not survive a reload", "performance.timeOrigin !== $previousPage && document.querySelector('#update-available').offsetWidth > 0 && !document.querySelector('#dialog').open")
+        js("document.querySelector('.avatar').click(); document.querySelector('[data-action=update-settings]').click()")
+        await("Settings did not reflect the preference", "document.querySelector('#update-skip-settings')?.checked === true")
+        js("document.querySelector('#update-skip-settings').click(); document.querySelector('[data-action=close-dialog]').click()")
+        await("Re-enabling prompts did not open the offer", "!!document.querySelector('#dialog[open] [data-action=update-install]')")
+        if (arguments.getString("commit_update") == "true") {
+            js("document.querySelector('[data-action=update-install]').click()")
+            // A successful install replaces this process. The host verifies the new package version.
+            repeat(100) {
+                val error = js("document.querySelector('#toast:not(.hidden)')?.textContent || null")
+                check(error == "null") { error }
+                Thread.sleep(250)
+            }
+            error("The update did not replace the test app")
+        }
     }
 
     private fun checkPlaylistSearch(js: (String) -> String, await: (String, String) -> Unit) {

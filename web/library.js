@@ -7,7 +7,7 @@ export async function isDuplicateImport(listed, track, bytes, androidDevice) {
 export function savedTrackMetadata(track, previous) {
   // YouTube song and video views share an ID. Playing its video must keep a saved song downloadable.
   const keepSong = track.source === 'youtube' && track.kind === 'video' && previous?.source === 'youtube' && previous.kind !== 'video';
-  const { queueKey, playlistId, ...metadata } = keepSong ? previous : track;
+  const { queueKey, playlistId, manuallyQueued, ...metadata } = keepSong ? previous : track;
   if (previous?.spotifyImportIds || track.spotifyImportIds) {
     metadata.spotifyImportIds = [...new Set([...(previous?.spotifyImportIds || []), ...(track.spotifyImportIds || [])])];
   }

@@ -20,6 +20,13 @@ object Engine {
         return Python.getInstance().getModule("android_bridge").callAttr("handle", operation, args).toString()
     }
 
+    fun update(context: Context, operation: String, value: String, destination: String = ""): String {
+        initialize(context)
+        val token = context.noBackupFilesDir.resolve("github-update-token")
+        return Python.getInstance().getModule("updates").callAttr("rpc",
+            operation, BuildConfig.VERSION_NAME, "android", token.path, value, destination).toString()
+    }
+
     fun openPhoneDiscovery(context: Context, name: String): PyObject {
         initialize(context)
         return Python.getInstance().getModule("device_sync").callAttr("PhonePresence", name)

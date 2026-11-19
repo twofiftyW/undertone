@@ -132,7 +132,12 @@ export function queueEntries(tracks, playlistId = null, key = () => crypto.rando
 
 export function insertUpNext(queue, index, added, active) {
   const result = [...queue];
-  result.splice(active ? index + 1 : 0, 0, ...added);
+  const start = active ? index + 1 : 0;
+  let position = start;
+  for (let i = start; i < queue.length; i++) {
+    if (queue[i].manuallyQueued) position = i + 1;
+  }
+  result.splice(position, 0, ...added.map(track => ({ ...track, manuallyQueued: true })));
   return { queue: result, index: active ? index : 0 };
 }
 

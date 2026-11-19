@@ -96,14 +96,23 @@ test('large track windows cover the viewport after fast jumps including both end
   }
 });
 
-test('new entries come first in Up next without replacing the active occurrence', () => {
-  const active = { id: 'duplicate', queueKey: 'active' };
-  const added = [{ id: 'duplicate', queueKey: 'addition' }, { id: 'third' }];
-  const before = [{ id: 'earlier' }, active, { id: 'later' }];
-  const result = insertUpNext(before, 1, added, true);
-  assert.equal(result.queue[result.index], active);
-  assert.deepEqual(result.queue.slice(2), [...added, before[2]]);
-  assert.deepEqual(insertUpNext([active], 0, added, false), { queue: [...added, active], index: 0 });
+test('manual queues play in addition order before the playlist, including duplicate songs', () => {
+  const active = { id: 'repeat', queueKey: 'playing' };
+  const first = { id: 'repeat', queueKey: 'first' };
+  const second = { id: 'repeat', queueKey: 'second' };
+  const later = { id: 'playlist-song', queueKey: 'later' };
+  const keys = entries => entries.map(track => track.queueKey);
+
+  const queued = insertUpNext([active, later], 0, [first], true);
+  const more = insertUpNext(queued.queue, 0, [second], true);
+  assert.equal(more.queue[more.index], active);
+  assert.deepEqual(keys(more.queue), ['playing', 'first', 'second', 'later']);
+  assert.deepEqual(keys(insertUpNext(queued.queue, 1, [second], true).queue), keys(more.queue));
+
+  const idle = insertUpNext([], -1, [first], false);
+  const idleMore = insertUpNext(idle.queue, idle.index, [second], false);
+  assert.equal(idleMore.index, 0);
+  assert.deepEqual(keys(idleMore.queue), ['first', 'second']);
 });
 
 test('home derives artist order from listening, with likes and follows filling empty spots', () => {

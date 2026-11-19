@@ -23,7 +23,7 @@ function bridgeRequest(send, timeout = 240000) {
 }
 
 function request(operation, args = {}) {
-  const timeout = operation === 'link_pull' ? 24 * 60 * 60 * 1000 : operation === 'download_track' ? 620000 : 240000;
+  const timeout = operation === 'link_pull' ? 24 * 60 * 60 * 1000 : ['download_track', 'app_update'].includes(operation) ? 620000 : 240000;
   return bridgeRequest(id => device.request(id, operation, JSON.stringify(args)), timeout);
 }
 
@@ -34,6 +34,7 @@ function call(method, ...args) {
 }
 
 async function invoke(command, args, options) {
+  if (command === 'app_update') return request(command, args);
   if (command === 'get_app_icon') return call('getAppIcon');
   if (command === 'set_app_icon') return call('setAppIcon', args.id);
   if (command === "load_library") return call("loadLibrary");
