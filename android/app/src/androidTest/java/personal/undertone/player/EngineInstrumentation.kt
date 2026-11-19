@@ -26,6 +26,23 @@ class EngineInstrumentation : Instrumentation() {
             val results = Bundle()
             try {
                 val context = targetContext
+                if (arguments.getString("playlist_search_only") == "true") {
+                    val night = fixture('a').put("title", "Night Drive").put("artist", "Moon Unit")
+                    val morning = fixture('b').put("title", "Morning News").put("artist", "Daylight")
+                    val trackIds = JSONArray(listOf("local:b", "local:a", "local:b", "local:a") + List(100) { "local:b" })
+                    val playlists = JSONArray()
+                        .put(JSONObject().put("id", "night-list").put("name", "Night Mix").put("trackIds", trackIds))
+                        .put(JSONObject().put("id", "morning-list").put("name", "Morning Mix").put("trackIds", JSONArray().put("local:b")))
+                    val library = JSONObject().put("version", 1).put("tracks", JSONObject().put("local:a", night).put("local:b", morning))
+                        .put("liked", JSONArray()).put("recent", JSONArray()).put("imports", JSONArray()).put("playlists", playlists).put("volume", 0)
+                    check(!JSONObject(DeviceBridge(context) { _, _ -> }.saveLibrary(library.toString())).has("error"))
+                    val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    try { checkAppUi(activity, "") }
+                    finally { PlaybackBridge(context).command("stop", ""); runOnMainSync { activity.finish() } }
+                    results.putString("result", "PASS: both playlist searches, focus, clear, and playback of a duplicate result")
+                    finish(Activity.RESULT_OK, results)
+                    return@Thread
+                }
                 if (arguments.getString("preload_only") == "true") {
                     val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     val bridge = PlaybackBridge(context)
@@ -51,7 +68,7 @@ class EngineInstrumentation : Instrumentation() {
                         .put("playlists", JSONArray().put(JSONObject().put("id", "gesture").put("name", "Gesture test").put("trackIds", JSONArray().put("local:swipe-fixture"))))
                     check(!JSONObject(DeviceBridge(context) { _, _ -> }.saveLibrary(library.toString())).has("error"))
                     val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    checkLanguageAndSwipe(activity, "Swipe fixture")
+                    checkAppUi(activity, "Swipe fixture")
                     runOnMainSync { activity.finish() }
                     results.putString("result", "PASS: Android Russian UI persistence and swipe-to-queue")
                     finish(Activity.RESULT_OK, results)
@@ -130,7 +147,7 @@ class EngineInstrumentation : Instrumentation() {
                 bridge.command("stop", "")
                 val savedPlaylist = JSONObject(storage.loadLibrary()).getJSONObject("data").getJSONArray("playlists").getJSONObject(0)
                 check(savedPlaylist.getLong("pinnedAt") == 123L && savedPlaylist.getLong("lastPlayedAt") > 0L)
-                checkLanguageAndSwipe(activity, track.getString("title"))
+                checkAppUi(activity, track.getString("title"))
                 runOnMainSync { activity.finish() }
                 results.putString("result", "PASS: Android streaming/background/offline playback, PC copy, queue edits and handoffs, pins, Russian UI persistence, and swipe-to-queue")
                 finish(Activity.RESULT_OK, results)
@@ -227,7 +244,7 @@ class EngineInstrumentation : Instrumentation() {
         }
     }
 
-    private fun checkLanguageAndSwipe(activity: Activity, title: String) {
+    private fun checkAppUi(activity: Activity, title: String) {
         lateinit var web: WebView
         val origin = IntArray(2)
         runOnMainSync {
@@ -250,6 +267,10 @@ class EngineInstrumentation : Instrumentation() {
             }
         }
         await("App did not start", "document.body.classList.contains('android-app') && !!document.querySelector('.home-heading')")
+        if (arguments.getString("playlist_search_only") == "true") {
+            checkPlaylistSearch(::js, ::await)
+            return
+        }
         val menu = js("document.querySelector('.topbar-actions')?.innerHTML")
         check(menu.contains("language-button")) { "Language button missing from loaded header: " + menu.take(450) }
         js("document.querySelector('.language-button').click()")
@@ -297,5 +318,35 @@ class EngineInstrumentation : Instrumentation() {
         val expected = JSONObject.quote(title)
         await("Full right swipe failed. Events: ${js("window.swipeEvents.slice(-12)")}", "document.querySelectorAll('.queue-item').length === 1 && document.querySelector('.queue-item strong').textContent === $expected")
         check(js("document.querySelector('#play-pause').getAttribute('aria-label')") == JSONObject.quote("Воспроизвести")) { "Swiping started playback" }
+    }
+
+    private fun checkPlaylistSearch(js: (String) -> String, await: (String, String) -> Unit) {
+        fun type(value: String) = js("""(() => {
+            const input = document.querySelector('#playlist-search');
+            input.focus(); input.value = ${JSONObject.quote(value)};
+            input.dispatchEvent(new Event('input', { bubbles:true }));
+            return input === document.activeElement && input.offsetWidth > 0;
+        })()""")
+        js("document.querySelector('.mobile-nav [data-view=library]').click()")
+        await("The library playlist search is missing", "!!document.querySelector('#playlist-search') && document.querySelectorAll('#playlist-search-results .playlist-card').length === 2")
+        check(type("not here") == "true") { "Library search lost focus" }
+        await("Library empty results are missing", "!!document.querySelector('#playlist-search-results [role=status]')")
+        check(type("NIGHT") == "true")
+        await("Library search did not filter by name", "document.querySelectorAll('#playlist-search-results .playlist-card').length === 1 && !!document.querySelector('#playlist-search-results [data-view=\"playlist:night-list\"]')")
+        js("document.querySelector('#playlist-search-results .playlist-open').click()")
+        await("Playlist search did not open with a separate value", "document.querySelector('#playlist-search')?.value === '' && !!document.querySelector('#playlist-search-results [data-track-window]')")
+        check(type("Night Drive") == "true") { "Playlist search lost focus" }
+        await("Song title search did not keep both occurrences", "document.querySelectorAll('#playlist-search-results .track-row').length === 2")
+        check(type("moon unit") == "true")
+        await("Artist search did not preserve the stored occurrence", "document.querySelectorAll('#playlist-search-results .track-row').length === 2 && !!document.querySelector('#playlist-search-results [data-track-position=\"3\"][data-playlist-index=\"3\"]')")
+        js("document.querySelector('#playlist-search-results [data-track-position=\"3\"] .song-title').click()")
+        waitFor("The second match did not play in the full playlist") {
+            val queue = JSONObject(PlaybackService.queueSnapshot)
+            it.optBoolean("playing") && it.optInt("index") == 3 && queue.getJSONArray("tracks").length() == 104
+        }
+        js("document.querySelector('[data-action=clear-playlist-search]').click()")
+        await("Clearing search did not restore the original list and focus", "document.activeElement?.id === 'playlist-search' && document.activeElement.value === '' && !!document.querySelector('#playlist-search-results [data-track-window]')")
+        js("document.querySelector('.mobile-nav [data-view=library]').click()")
+        await("The library did not keep its own query", "document.querySelector('#playlist-search')?.value === 'NIGHT' && document.querySelectorAll('#playlist-search-results .playlist-card').length === 1")
     }
 }

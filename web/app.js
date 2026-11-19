@@ -1,4 +1,4 @@
-import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, playlistRowPositions, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
+import { formatTime, escapeHTML as h, fileMetadata, nextQueueIndex, shuffleQueueKeys, filterPlaylistTracks, removePlaylistEntry, matches, emptyLibrary, rankTracks, sortReleases, sortPlaylists, queueEntries, moveQueueEntry, playableSelection, insertUpNext, listeningArtists } from "./core.js";
 import { isFileDrag, searchTracks } from "./core.js";
 import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequest } from "./runtime.js";
 import { spotifyJobClient } from "./spotify-job.js";
@@ -30,6 +30,7 @@ let saveChain = Promise.resolve();
 let page = "discover";
 let searchCategory = "all";
 let query = "";
+const playlistSearchQueries = new Map();
 let remoteTracks = [];
 let remoteStatus = "loading";
 let requestId = 0;
@@ -247,17 +248,18 @@ function trackCard(track) {
     <button class="icon-btn more-card" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></article>`;
 }
 
-function trackRows(list, albumId = "", playlistPositions = null) {
+function trackRows(list, albumId = "", playlistPositions = null, trackPositions = null) {
   if (!list.length) return "";
   const windowed = trackWindows && list.length > 80;
   const row = index => {
     const original = list[index];
+    const position = trackPositions?.[index] ?? index;
     const resolved = original.source === 'unmatched' && resolvedSpotifyTracks.get(original.id);
     const track = resolved ? getTrack(resolved) || original : original;
     const liked = isLiked(track.id);
     return `
-    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${index}"${windowed ? ` role="listitem" aria-posinset="${index + 1}" aria-setsize="${list.length}"` : ""}${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
-      <button class="track-number" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}"><span>${index + 1}</span>${icon("play")}</button>
+    <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${position}"${windowed ? ` role="listitem" aria-posinset="${index + 1}" aria-setsize="${list.length}"` : ""}${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
+      <button class="track-number" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}"><span>${position + 1}</span>${icon("play")}</button>
       <div class="row-song"><button class="thumb art-placeholder" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr(track.source === "unmatched" ? "Choose a recording for {title}" : "Play {title}", { title: track.title }))}">${art(track)}</button><div class="song-meta"><button class="song-title" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}">${h(track.title)}</button><div class="row-artists">${track.source === "unmatched" ? `<span class="unmatched-badge">${h(tr("Choose recording"))}</span>` : ""}${canDownload(track) && library.downloads[track.id]?.nativePath ? `<span class="downloaded-badge">${h(tr("Offline"))}</span>` : ""}${track.explicit ? `<span class="explicit-badge" aria-label="${h(tr("Explicit"))}">E</span>` : ""}${artistLinks(track)}${track.kind === "video" ? `<span class="video-badge">${h(tr("VIDEO"))}</span>` : ""}</div></div></div>
       <span class="row-source">${track.album?.id ? `<button class="album-link" data-action="open-album" data-id="${h(track.album.id)}">${h(track.album.title)}</button>` : track.source === "local" ? tr("Your files · Offline") : track.source === "monochrome" ? "Monochrome" : track.source === "unmatched" ? tr("Spotify import · Choose recording") : track.source === "youtube" ? "YouTube" : "Audius"}</span>
       <span class="row-duration" data-duration-for="${h(track.id)}">${track.duration ? formatTime(track.duration) : "—"}</span><span class="row-actions"><button class="icon-btn add-queue-button" data-action="queue-add-track" data-id="${h(track.id)}" aria-label="${h(tr('Add {title} to queue', { title: track.title }))}" title="${h(tr("Add to queue"))}">${icon("plus")}</button><button class="icon-btn ${liked ? "liked" : ""}" data-action="like" data-id="${h(track.id)}" aria-label="${liked ? tr("Unlike") : tr("Like")} ${h(track.title)}" aria-pressed="${liked}">${icon("heart")}</button><button class="icon-btn" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></span>
@@ -429,6 +431,27 @@ function collectionTracks() {
   return remoteTracks;
 }
 
+function renderPlaylistSearch(label) {
+  const term = playlistSearchQueries.get(page) || '';
+  return `<div class="search-box playlist-search" role="search" aria-label="${h(tr(label))}">
+    ${icon('search')}
+    <input id="playlist-search" type="search" value="${h(term)}" data-page="${h(page)}" aria-label="${h(tr(label))}" aria-controls="playlist-search-results" placeholder="${h(tr(label))}" maxlength="300" autocomplete="off" spellcheck="false">
+    <button type="button" class="icon-btn ${term ? '' : 'hidden'}" data-action="clear-playlist-search" aria-label="${h(tr('Clear search'))}">${icon('close')}</button>
+  </div>`;
+}
+
+function playlistSearchEmpty(message) {
+  return `<p class="playlist-search-empty" role="status">${h(tr(message))}</p>`;
+}
+
+function renderPlaylistTrackResults(collection, list = collectionTracks()) {
+  const term = playlistSearchQueries.get(page) || '';
+  const results = filterPlaylistTracks(collection.trackIds, list, term);
+  if (results.tracks.length) return trackRows(results.tracks, '', results.playlistPositions, results.trackPositions);
+  if (term.trim()) return playlistSearchEmpty('No songs match your search.');
+  return empty('music', tr('Good playlists start with one song.'), tr('Find a track, open its menu, and add it to this playlist.'), 'discover', tr('Explore music'));
+}
+
 function renderCollection() {
   const local = page === "local";
   const liked = page === "liked";
@@ -438,12 +461,42 @@ function renderCollection() {
   const title = downloaded ? tr("Downloads") : liked ? tr("Liked songs") : local ? tr("Your music, here.") : collection.name;
   const list = collectionTracks();
   const subtitle = downloaded ? tr("Saved on this device. Playback uses these files before the internet.") : liked ? tr("All the songs that felt like a yes.") : local ? tr("Imported audio saved on this device.") : tr("A little collection, entirely your own.");
-  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar${collection ? ' playlist-toolbar' : ''}"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog" data-id="${h(collection.id)}">${icon("import")}${h(tr("Import"))}</button><button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${list.length ? trackRows(list, "", collection ? playlistRowPositions(collection.trackIds, list) : null) : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music")) : empty(local ? "folder" : liked ? "heart" : "music", local ? tr("A home for your own music.") : liked ? tr("Your favorites start here.") : tr("Good playlists start with one song."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : liked ? tr("Tap the heart on anything you love. We’ll keep it here for you.") : tr("Find a track, open its menu, and add it to this playlist."), local ? "import" : "discover", local ? tr("Import") : tr("Explore music"))}`;
+  const results = collection
+    ? `${renderPlaylistSearch('Search this playlist')}<div id="playlist-search-results">${renderPlaylistTrackResults(collection, list)}</div>`
+    : list.length ? trackRows(list)
+    : downloaded ? empty("download", tr("Keep your music with you."), tr("Download a song, album, or playlist to play it from this device without streaming."), "discover", tr("Find music"))
+    : empty(local ? "folder" : "heart", local ? tr("A home for your own music.") : tr("Your favorites start here."), local ? tr("Import MP3, FLAC, WAV, M4A, or other audio your device supports. Originals stay right where they are.") : tr("Tap the heart on anything you love. We’ll keep it here for you."), local ? "import" : "discover", local ? tr("Import") : tr("Explore music"));
+  return `<div class="page-heading"><div class="page-heading-row"><div class="collection-cover ${liked ? "heart-cover" : local ? "folder-cover" : ""}">${collection ? art({ tracks: list }) : icon(liked ? "heart" : local ? "folder" : "music")}</div><div><span class="eyebrow">${local ? tr("ALWAYS WITH YOU") : tr("YOUR COLLECTION")}</span><h1>${h(title)}</h1><p>${h(subtitle)}<br>${countLabel(list.length)}</p></div></div></div><div class="page-toolbar${collection ? ' playlist-toolbar' : ''}"><button class="primary-btn" data-action="play-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("play")}${h(tr("Play all"))}</button>${local ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button>` : `<button class="secondary-btn" data-action="shuffle-all" ${!list.some(track => track.source !== "unmatched") ? "disabled" : ""}>${icon("shuffle")}${h(tr("Shuffle"))}</button>`}${!local && !downloaded && list.length ? `<button class="secondary-btn" data-action="download-collection">${icon("download")}${h(tr("Download all"))}</button>` : ""}${downloaded ? `<button class="secondary-btn" data-action="download-status">${h(tr("Downloads"))}</button>` : ""}${collection ? `<button class="secondary-btn" data-action="import" aria-haspopup="dialog" data-id="${h(collection.id)}">${icon("import")}${h(tr("Import"))}</button><button class="secondary-btn ${collection.pinnedAt ? "on" : ""}" data-action="pin-playlist" data-id="${h(collection.id)}" aria-pressed="${!!collection.pinnedAt}">${icon("pin")}${collection.pinnedAt ? tr("Unpin") : tr("Pin playlist")}</button><button class="icon-btn" data-action="rename-playlist" aria-label="${h(tr("Rename playlist"))}">${icon("edit")}</button><button class="icon-btn" data-action="delete-playlist" aria-label="${h(tr("Delete playlist"))}">${icon("trash")}</button>` : ""}<select id="sort" aria-label="${h(tr("Sort tracks"))}"><option value="added" ${sort === "added" ? "selected" : ""}>${h(tr("Recently added"))}</option><option value="title" ${sort === "title" ? "selected" : ""}>${h(tr("Song title"))}</option><option value="artist" ${sort === "artist" ? "selected" : ""}>${h(tr("Artist"))}</option></select></div>${results}`;
+}
+
+function renderLibraryPlaylists() {
+  const term = playlistSearchQueries.get('library') || '';
+  const playlists = sortPlaylists(library.playlists, term);
+  if (!playlists.length) {
+    return term.trim() ? playlistSearchEmpty('No playlists match your search.')
+      : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"));
+  }
+  const cards = playlists.map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
+  return `<div class="playlist-cards">${cards}</div>`;
 }
 
 function renderLibrary() {
-  const cards = sortPlaylists(library.playlists).map(p => `<article class="playlist-card"><button class="playlist-open" data-view="playlist:${h(p.id)}"><span class="mini-cover">${playlistCover(p.trackIds)}</span><span><strong>${h(p.name)}</strong><small>${p.pinnedAt ? 'Pinned · ' : ''}${countLabel(p.trackIds.length)}</small></span></button><button class="icon-btn playlist-pin ${p.pinnedAt ? 'on' : ''}" data-action="pin-playlist" data-id="${h(p.id)}" aria-label="${p.pinnedAt ? tr("Unpin") : tr("Pin")} ${h(p.name)}" aria-pressed="${!!p.pinnedAt}">${icon('pin')}</button></article>`).join('');
-  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${library.playlists.length ? `<div class="playlist-cards">${cards}</div>` : empty("music", tr("Make a little collection."), tr("For late nights, long walks, or no reason at all."), "create-playlist", tr("Create a playlist"))}`;
+  return `<div class="page-heading"><span class="eyebrow">${h(tr("ALL YOUR GOOD THINGS"))}</span><h1>${h(tr("Your library."))}</h1><p>${h(tr("Little collections. Endless possibilities."))}</p><div class="library-shortcuts"><button data-view="liked">${icon("heart")}${h(tr("Liked songs"))} <span class="muted">${library.liked.length}</span></button><button data-view="local">${icon("folder")}${h(tr("Local files"))} <span class="muted">${library.imports.length}</span></button><button data-view="downloads">${icon("download")}${h(tr("Downloads"))} <span class="muted">${Object.values(library.downloads).filter(file => file?.nativePath).length}</span></button><button data-action="import" aria-haspopup="dialog">${icon("import")}${h(tr("Import"))}</button><button data-action="device-link">${icon("devices")}${nativeAudio ? tr("Connect PC") : tr("Connect phone")}</button></div></div>${library.followedArtists.length ? `<section class="library-artists"><div class="section-heading"><h2>${h(tr("Artists you follow"))}</h2></div><div class="artist-grid">${library.followedArtists.map(artistCard).join("")}</div></section>` : ""}<div class="section-heading"><div><h2>${h(tr("Your playlists"))}</h2><p>${h(tr("Pinned first · Recently played"))}</p></div><button class="secondary-btn" data-action="create-playlist">${icon("plus")}${h(tr("New playlist"))}</button></div>${renderPlaylistSearch('Search playlists')}<div id="playlist-search-results">${renderLibraryPlaylists()}</div>`;
+}
+
+function refreshPlaylistSearchResults() {
+  const results = $('#playlist-search-results');
+  if (!results) return;
+  trackWindows?.clear();
+  results.innerHTML = page === 'library' ? renderLibraryPlaylists() : renderPlaylistTrackResults(playlist());
+  trackWindows?.mount(results);
+}
+
+function updatePlaylistSearch(input) {
+  if (input.value) playlistSearchQueries.set(page, input.value);
+  else playlistSearchQueries.delete(page);
+  input.parentElement.querySelector('[data-action="clear-playlist-search"]').classList.toggle('hidden', !input.value);
+  refreshPlaylistSearchResults();
 }
 
 function renderSidebar() {
@@ -453,6 +506,8 @@ function renderSidebar() {
 }
 
 function render() {
+  const focused = document.activeElement;
+  const restoreSearch = focused?.id === 'playlist-search' && focused.dataset.page === page;
   trackWindows?.clear();
   document.body.classList.toggle("artist-page", page.startsWith("artist:"));
   document.body.classList.toggle("album-page", page.startsWith("album:"));
@@ -467,6 +522,11 @@ function render() {
   renderSidebar();
   trackWindows?.mount(view);
   observeReleaseTracks();
+  const field = restoreSearch && $('#playlist-search');
+  if (field) {
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(focused.selectionStart, focused.selectionEnd, focused.selectionDirection);
+  }
 }
 
 function recommendationArtists() {
@@ -1390,6 +1450,10 @@ function useSpotifyRecordings(candidates) {
     tracks.set(id, library.tracks[id]);
     resolvedSpotifyTracks.set(oldId, id);
   }
+  if (playlist() && playlistSearchQueries.get(page)?.trim()) {
+    refreshPlaylistSearchResults();
+    return;
+  }
   for (const row of document.querySelectorAll('.track-row[data-track-id]')) {
     const id = replacements.get(row.dataset.trackId);
     if (!id) continue;
@@ -1685,6 +1749,13 @@ const actions = {
   "restore-output": async () => { await audio.restoreOutput(); $("#volume").value = Math.round(audio.volume * 100); library.volume = audio.volume; await saveLibrary(); updateVolume(); showAudioOutput(); },
   "release-queue": async button => enqueueTracks((await ensureAlbum(button.dataset.id)).tracks),
   "autoplay": () => { autoplay = !autoplay; renderQueue(); },
+  "clear-playlist-search": () => {
+    const field = $('#playlist-search');
+    if (!field) return;
+    field.value = '';
+    field.focus();
+    updatePlaylistSearch(field);
+  },
   discover: () => navigate("discover"),
   import: button => importSourceDialog(button.dataset.id),
   about,
@@ -1801,6 +1872,9 @@ $("#search").addEventListener("input", () => {
   render();
   clearTimeout(searchTimer);
   if (query) searchTimer = setTimeout(() => loadCatalog(), 450);
+});
+view.addEventListener('input', event => {
+  if (event.target.id === 'playlist-search') updatePlaylistSearch(event.target);
 });
 $("#search-form").addEventListener("submit", (event) => { event.preventDefault(); clearTimeout(searchTimer); if (query) loadCatalog(); });
 $("#clear-search").addEventListener("click", () => { clearTimeout(searchTimer); ++requestId; query = ""; $("#search").value = ""; render(); $("#search").focus(); });

@@ -97,14 +97,29 @@ export function playlistRowPositions(trackIds, displayedTracks) {
   return displayedTracks.map(track => positions.get(track.id).pop());
 }
 
+export function filterPlaylistTracks(trackIds, tracks, query) {
+  const playlistPositions = playlistRowPositions(trackIds, tracks);
+  const term = query.trim().toLocaleLowerCase();
+  if (!term) return { tracks, playlistPositions };
+  const result = { tracks: [], playlistPositions: [], trackPositions: [] };
+  tracks.forEach((track, index) => {
+    if (!`${track.title || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(term)) return;
+    result.tracks.push(track);
+    result.playlistPositions.push(playlistPositions[index]);
+    result.trackPositions.push(index);
+  });
+  return result;
+}
+
 export function removePlaylistEntry(trackIds, index, trackId) {
   if (!Number.isInteger(index) || trackIds[index] !== trackId) return false;
   trackIds.splice(index, 1);
   return true;
 }
 
-export function sortPlaylists(playlists) {
-  return [...playlists].sort((a, b) => {
+export function sortPlaylists(playlists, query = '') {
+  const term = query.trim().toLocaleLowerCase();
+  return playlists.filter(playlist => !term || String(playlist.name ?? '').toLocaleLowerCase().includes(term)).sort((a, b) => {
     const ap = Number(a.pinnedAt) || 0, bp = Number(b.pinnedAt) || 0;
     if (!!ap !== !!bp) return ap ? -1 : 1;
     return ap && bp ? bp - ap : (Number(b.lastPlayedAt) || 0) - (Number(a.lastPlayedAt) || 0);
