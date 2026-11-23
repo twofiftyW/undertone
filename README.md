@@ -25,7 +25,14 @@ Keep the entire `dist/linux/` directory together: the executable needs `music/`.
 
 ## Settings
 
-Use the gear in the top bar. **Appearance**, **Language**, **Playback**, **Devices**, **Updates**, and **About** each have their own section.
+Use the gear in the top bar. **Appearance**, **Language**, **Playback**, **Account**, **Devices**, **Updates**, and **About** each have their own section.
+
+In an accounts-enabled build, open **Settings → Account**. Use an invite code
+the first time you sign in with GitHub. The same account syncs playlists,
+liked songs, and library metadata across devices. Each device saves its own
+offline audio. The owner generates one-use codes from this screen. See the
+[account service setup](cloud/accounts/README.md) for deployment and the
+owner's first invite.
 
 ## Updates
 

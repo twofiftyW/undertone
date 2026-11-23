@@ -18,7 +18,7 @@
       "dragDropEnabled": false
     }],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https: asset: http://asset.localhost; connect-src ipc: http://ipc.localhost https://*.workers.dev; object-src 'none'; base-uri 'self'; frame-src 'none'",
       "assetProtocol": { "enable": true, "scope": ["$APPDATA/audio/**", "$APPDATA/downloads/**"] }
     }
   },

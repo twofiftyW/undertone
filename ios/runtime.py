@@ -62,6 +62,15 @@ class AppServer(http.server.ThreadingHTTPServer):
         library = self.files / 'library.json'
         if operation == 'app_update' and args.get('operation') in ('status', 'check'):
             return updates.request(args['operation'], self.version, 'ios')
+        if operation in ('load_account_session', 'save_account_session'):
+            session = self.files / 'account-session.json'
+            if operation == 'load_account_session':
+                return json.loads(session.read_bytes()) if session.is_file() else None
+            if args.get('session') is None:
+                session.unlink(missing_ok=True)
+            else:
+                device_sync.atomic_json(session, args['session'])
+            return True
         if operation == 'load_library':
             return json.loads(library.read_bytes()) if library.is_file() else None
         if operation == 'save_library':
@@ -135,7 +144,7 @@ class Bridge(http.server.BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                         "img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self'; "
+                         "img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://*.workers.dev; "
                          "object-src 'none'; frame-src 'none'; base-uri 'self'")
 
     def local_file(self, route):

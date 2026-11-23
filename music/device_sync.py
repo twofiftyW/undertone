@@ -272,6 +272,7 @@ def manifest(root, device_id):
     library = copy.deepcopy(library)
     files = []
     library['downloads'] = {}
+    library.pop('cloud', None)
     for track_id, track in library['tracks'].items():
         track.pop('nativePath', None)
         track.pop('uri', None)
