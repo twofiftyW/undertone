@@ -127,7 +127,7 @@ class Bridge(http.server.BaseHTTPRequestHandler):
             return path[len(self.server.prefix):]
         return ''
 
-    def headers(self, status, mime, size):
+    def file_headers(self, status, mime, size):
         self.send_response(status)
         self.send_header('Content-Type', mime)
         self.send_header('Content-Length', str(size))
@@ -179,7 +179,7 @@ class Bridge(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     return
             mime = 'text/javascript' if file.suffix == '.js' else mimetypes.guess_type(file.name)[0] or 'application/octet-stream'
-            self.headers(206 if byte_range else 200, mime, last - first + 1)
+            self.file_headers(206 if byte_range else 200, mime, last - first + 1)
             self.send_header('Accept-Ranges', 'bytes')
             if byte_range:
                 self.send_header('Content-Range', f'bytes {first}-{last}/{size}')
@@ -244,7 +244,7 @@ class Bridge(http.server.BaseHTTPRequestHandler):
         except Exception:
             reply = {'error': 'This request couldn’t finish. Try again.'}
         body = json.dumps(reply, ensure_ascii=False).encode('utf-8')
-        self.headers(200, 'application/json; charset=utf-8', len(body))
+        self.file_headers(200, 'application/json; charset=utf-8', len(body))
         self.end_headers()
         try:
             self.wfile.write(body)

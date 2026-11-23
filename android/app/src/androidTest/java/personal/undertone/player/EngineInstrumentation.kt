@@ -27,6 +27,14 @@ class EngineInstrumentation : Instrumentation() {
             val results = Bundle()
             try {
                 val context = targetContext
+                if (arguments.getString("jobs_only") == "true") {
+                    val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    try { checkBackgroundJobs(activity) }
+                    finally { runOnMainSync { activity.finish() } }
+                    results.putString("result", "PASS: native download and import jobs completed while the app was minimized")
+                    finish(Activity.RESULT_OK, results)
+                    return@Thread
+                }
                 if (arguments.getString("update_only") == "true") {
                     Engine.update(context, "status", "")
                     val python = Python.getInstance()
@@ -348,6 +356,63 @@ class EngineInstrumentation : Instrumentation() {
         check(js("document.querySelector('#play-pause').getAttribute('aria-label')") == JSONObject.quote("Воспроизвести")) { "Swiping started playback" }
     }
 
+    private fun checkBackgroundJobs(activity: Activity) {
+        val context = targetContext
+        val tracks = JSONArray((1..6).map { JSONObject().put("id", "15927791321693798$it").put("source", "monochrome") })
+        Engine.call(context, "download_job_status", JSONObject())
+        val python = Python.getInstance()
+        val builtins = python.getModule("builtins")
+        val engine = python.getModule("backend")
+        val offline = python.getModule("offline")
+        builtins.callAttr("exec", """
+            def fixture_download(ident, source):
+                time.sleep(1)
+                path = Path(os.environ["UNDERTONE_DOWNLOAD_DIR"]) / (ident + ".flac")
+                path.parent.mkdir(exist_ok=True)
+                path.write_bytes(b"fLaC" + b"x" * 64)
+                return {"nativePath": str(path), "bytes": path.stat().st_size}
+            download = fixture_download
+        """.trimIndent(), offline["__dict__"])
+        builtins.callAttr("exec", """
+            def fixture_match(seed):
+                time.sleep(1)
+                return {"track": {"id": "test:" + seed["title"]}, "candidates": [], "reason": ""}
+            match_recording = fixture_match
+        """.trimIndent(), engine["__dict__"])
+
+        val songs = JSONObject()
+        for (index in 1..9) songs.put("test:$index", JSONObject().put("source", "unmatched")
+            .put("importRecord", JSONObject().put("title", "Minimized $index").put("artist", "Test")))
+        val library = JSONObject().put("version", 1).put("tracks", songs).put("playlists", JSONArray())
+            .put("liked", JSONArray()).put("imports", JSONArray()).put("recent", JSONArray())
+        check(!JSONObject(DeviceBridge(context) { _, _ -> }.saveLibrary(library.toString())).has("error"))
+        fun start(operation: String, options: JSONObject) {
+            val done = CountDownLatch(1)
+            var state = JSONObject()
+            SpotifyImportService.command(activity, operation, options.toString()) {
+                state = JSONObject(it)
+                done.countDown()
+            }
+            check(done.await(6, TimeUnit.SECONDS) && !state.has("error")) { state.toString() }
+        }
+        start("download_job_start", JSONObject().put("tracks", tracks))
+        start("spotify_job_start", JSONObject())
+        check(Engine.call(context, "download_job_status", JSONObject()).getString("state") == "running")
+        check(Engine.call(context, "spotify_job_status", JSONObject()).getString("state") == "running")
+        runOnMainSync { check(activity.moveTaskToBack(true)) }
+        val deadline = SystemClock.uptimeMillis() + 20_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val downloads = Engine.call(context, "download_job_status", JSONObject())
+            val imports = Engine.call(context, "spotify_job_status", JSONObject())
+            if (downloads.getString("state") == "done" && imports.getString("state") == "done") {
+                check(downloads.getInt("checked") == 6 && imports.getInt("checked") == 9)
+                return
+            }
+            Thread.sleep(200)
+        }
+        error("A native job did not finish in the background.")
+    }
+
     private fun checkUpdatePrompt(js: (String) -> String, await: (String, String) -> Unit, reload: () -> Unit) {
         await("The update prompt did not open at startup", "!!document.querySelector('#dialog[open] [data-action=update-install]')")
         js("document.querySelector('#update-skip').click(); document.querySelector('[data-action=update-later]').click()")
@@ -356,7 +421,7 @@ class EngineInstrumentation : Instrumentation() {
         reload()
         await("The update preference did not survive a reload", "performance.timeOrigin !== $previousPage && document.querySelector('#update-available').offsetWidth > 0 && !document.querySelector('#dialog').open")
         js("document.querySelector('.settings-button').click(); document.querySelector('[data-tab=updates]').click()")
-        await("Settings did not reflect the preference", "document.querySelector('#update-skip-settings')?.checked === true")
+        await("Settings did not reflect the preference", "document.querySelector('#update-skip-settings')?.checked === true && !document.querySelector('#update-token') && document.querySelector('.settings-tabs [aria-current=page]')?.dataset.tab === 'updates'")
         js("document.querySelector('#update-skip-settings').click(); document.querySelector('[data-action=close-dialog]').click()")
         await("Re-enabling prompts did not open the offer", "!!document.querySelector('#dialog[open] [data-action=update-install]')")
         if (arguments.getString("commit_update") == "true") {

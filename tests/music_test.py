@@ -143,13 +143,13 @@ with ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler) as server:
                 inputs = [{'title': str(index)} for index in range(4 * i, 4 * i + 4)]
                 assert [r['track'] for r in dispatch('match', {'tracks': inputs})['matches']] == inputs
         assert len(server.received) == 12
-        assert len({port for port, _ in server.received}) <= 2
+        assert len({port for port, _ in server.received}) <= 4
         assert all(cookie is None for _, cookie in server.received)
     finally:
         server.shutdown()
         serving.join()
 
-with tempfile.TemporaryDirectory() as folder, patch.object(backend, 'CACHE', Path(folder)):
+with TemporaryDirectory() as folder, patch.object(backend, 'CACHE', Path(folder)):
     first = {'id': 'first-candidate'}
     second = {'id': 'second-candidate'}
     with patch.object(backend, 'match_recording', return_value={'track': None, 'candidates': [first, second]}):

@@ -1,6 +1,6 @@
 # Undertone
 
-A private music player for Linux, Windows, and Android. **Undertone Alpha 0.0.8** supports Linux x86_64, Windows 10/11 x64, and Android 8+ on arm64-v8a and x86_64.
+A personal music player for Linux, Windows, Android, and iOS. **Undertone 0.1.0-beta** supports Linux x86_64, Windows 10/11 x64, Android 8+ on arm64-v8a and x86_64, and iOS 16+.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,25 +8,29 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone Alpha from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Install Undertone Alpha 0.0.8 over 0.0.7-alpha to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **Android:** Install Undertone 0.1.0-beta over an earlier release to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **iOS:** The iPhone IPA requires Apple signing and a provisioning profile before it can be installed on a device. The simulator bundle runs on a Mac with Xcode and the matching simulator architecture. The same library UI, catalog engine, and offline downloads run inside the app. iOS can suspend imports and downloads after its background time allowance. Reopen Undertone and resume a paused job in the progress dialog.
 
 Large collections keep their full scroll range on all three platforms. The app renders the visible tracks and nearby rows as you scroll.
 
 On Android, the system Back gesture or button closes the keyboard, dialog, queue, or expanded player first, then returns to the previous page or tab. On the home screen it keeps Undertone Alpha open.
 
-Use **Language → Русский** in the top bar to switch the interface. The setting is saved on each device.
+Open **Settings → Language → Русский** to switch the interface. The setting is saved on each device.
 
-Open **Appearance** in the top bar (the palette icon in a narrow window) to choose **Forest green**, **Midnight blue**, **AMOLED black**, or **Graphite gray**. The theme changes immediately and is saved on this device. Forest green is the default. AMOLED black uses pure black for the main background, sidebar, and player.
+Open **Settings → Appearance** to choose **Forest green**, **Midnight blue**, **AMOLED black**, or **Graphite gray**. The theme changes immediately and is saved on this device. Forest green is the default. AMOLED black uses pure black for the main background, sidebar, and player.
 
 The app icon follows the theme by default. Clear **Sync with theme** under **App icon** to choose a different icon, such as a green icon with Midnight blue. Turning sync back on applies the current theme’s icon immediately. Your manual choice is available again the next time you turn sync off. On Android the icon appears in the app launcher. On Windows it appears on the window and the `Undertone Alpha.lnk` shortcut beside the portable executable. On Linux it appears on the window and in the launcher after installation with `install-linux.sh`.
 
 Keep the entire `dist/linux/` directory together: the executable needs `music/`. System requirements are Python 3, mpv, yt-dlp, Deno, OpenSSL, iproute2, WebKitGTK 4.1, GTK 3, audio support, and the desktop’s session D-Bus. These are present on the development computer. Catalog Python dependencies are bundled.
 
+## Settings
+
+Use the gear in the top bar. **Appearance**, **Language**, **Playback**, **Devices**, **Updates**, and **About** each have their own section.
+
 ## Updates
 
-Install 0.0.8 once to get the in-app updater. Open the avatar menu and choose **Update settings**. Create a [fine-grained GitHub access token](https://github.com/settings/personal-access-tokens/new) scoped to `twofiftyW/undertone` with read access to **Contents**, then save it in Update settings on each device. Access tokens are stored separately from your library and device sync.
+Open **Settings → Updates** to check the public GitHub release feed. Linux, Windows, and Android download and install their build after you approve it. Choose **Later** to keep an **Update available** button in the top bar. **Do not show again** hides future prompts and can be turned off under Updates. On Android, allow Undertone to install apps when prompted and confirm in the Android installer if the system asks. iOS opens the release page so you can sign a newer build.
 
-Undertone checks the project's published releases at startup and while open. Choose **Install update** to download and install the build for your device, or **Later** to leave an **Update available** button in the top bar. **Do not show again** hides future prompts and can be turned off in Update settings. Desktop updates restart the app. On Android, allow Undertone to install apps when prompted and confirm in the Android installer if the system asks.
 
 ## Download music for offline playback
 
@@ -61,6 +65,8 @@ On Android, confirming a Spotify import starts background matching. You can leav
 
 On Windows and Linux, Spotify matching continues after you minimize or close the window. Reopen Undertone to apply the saved results. The progress button below the search bar opens the import controls, where you can pause or resume. Desktop notifications report completion or a connection interruption when your system allows them.
 
+Imports try for a close match first. When that search yields alternatives, Undertone automatically picks the first one in the ranked list. To fix a match, open the song’s menu and select **Change recording**. Import and download jobs continue in the background on desktop and Android. Download jobs fetch several songs at a time and show progress in Downloads.
+
 Public Spotify playlist links are a best-effort alternative. Spotify may expose only a preview or no track list at all. The dialog labels preview imports; use an export for a complete playlist. Liked Songs and private collections require an export file. This import flow does not require configuring a Spotify developer app, and it does not copy Spotify’s encrypted audio files.
 
 ## Listening and your library
@@ -81,7 +87,7 @@ Open the queue using its player button. On a small phone screen, expand Now play
 
 Use **+** or **Add to queue** to put a song first under **Up next**. On Android, swipe a song row right to do the same. Album pages can add an entire release, in album order, at the front of the queue. Adding or reordering turns shuffle off so the selected order is followed.
 
-On Linux, Windows, and Android, the player starts loading the next recording with about ten seconds left in a stream. **Next** uses that load if it is already in progress. Local playback skips preloading. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
+The player starts buffering the next stream with about twenty seconds left. **Next** reuses an ongoing load. It also prepares the next available local file during offline playback. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
 
 ## Build Linux
 
@@ -109,15 +115,15 @@ Transfer the APK from the release to your phone by USB or your usual file-sharin
 To copy your PC library:
 
 1. Put phone and PC on the **same Wi-Fi**. Keep both apps open while copying.
-2. On Android, open **Library → Connect PC**. Keep this dialog on screen to make the phone visible to computers. It also searches for available PCs.
-3. On Linux or Windows, open **Library → Connect phone → Enable phone connection**. The PC searches for phones automatically. Select your phone by name and address and send it an invitation. The sidebar’s **Connect devices** opens the same dialog.
-4. On your phone, select the inviting PC or choose a computer directly from the list. Enter the full pairing code shown on that PC and tap **Pair with PC**. You can refresh either device list. If discovery is blocked, select manual entry on the phone and use the PC address shown on its screen.
+2. On your phone, open **Settings → Devices**. Keep this section open while discovering a PC or receiving an invitation.
+3. On Linux or Windows, open **Settings → Devices → Enable phone connection**. You can send an invitation to the phone from that screen.
+4. On your phone, select the PC and tap **Confirm on this phone**. On the PC, check the phone name and address, then click **Confirm on this PC**. If discovery is unavailable, enter the address displayed on the PC.
 5. Tap **Copy from PC**. Leave **Copy saved audio for offline listening** checked to copy completed downloads and imported files, or uncheck it to copy playlists and metadata only.
-6. The phone remembers its paired PC and can play copied audio offline. To refresh later, enable the PC connection and tap **Copy from PC** again. To switch computers, choose another PC in the same dialog and enter its pairing code.
+6. The phone remembers its paired PC and can play copied audio offline. To refresh later, enable the PC connection and tap **Copy from PC** again. To switch computers, select another PC in Settings and confirm on both devices.
 
 Copying adds PC Liked Songs and updates copies of the PC playlists while keeping phone-only collections. Repeated entries and track order remain intact. Songs only liked or put in a playlist on the PC are metadata until downloaded; complete downloads and imported audio are the files copied. Matching completed audio files are skipped on repeat copies. Transfers are size- and SHA-256-checked before an atomic rename. An interrupted copy preserves previous files and the phone library; retry to continue with already completed files skipped. This is a manual one-way PC-to-phone copy, not cloud or two-way live sync.
 
-While the PC connection is enabled, Undertone answers local discovery requests on UDP **47832** with the computer name. Android answers searches and receives invitations on UDP **47833** while its connection dialog is visible. The PC receives search replies on UDP **47834**. Accepting an invitation selects a PC in the pairing form. Pairing and library transfers use pinned TLS on TCP **47832**, a one-use ten-minute pairing PIN, and saved device tokens. Use **New pairing code** on the PC if the previous code has expired or has already paired a phone. Closing Undertone on the PC stops sharing until you enable it again. **Forget paired phones** revokes PC access. **Forget PC** on Android removes its saved link.
+While the PC connection is enabled, Undertone answers local discovery requests on UDP **47832** with the computer name. Android answers searches and receives invitations on UDP **47833** while its connection dialog is visible. The PC receives search replies on UDP **47834**. Accepting an invitation selects a PC in the pairing form. A pairing request expires after 90 seconds. The first connection pins the selected PC’s TLS certificate. The phone receives its access credential only after both devices confirm. Library transfers use pinned TLS on TCP **47832**. Closing Undertone on the PC stops sharing until you enable it again. **Forget paired phones** revokes PC access. **Forget PC** on Android removes its saved link.
 
 If UFW is enabled on Linux and either device cannot find the other, click **Allow phone through firewall** in the PC connection dialog and approve the system prompts. This allows TCP/UDP 47832 and UDP 47834 from the PC’s private local subnet. On Windows, allow the packaged Python runtime on private networks if Windows Firewall asks. On Wi-Fi networks that block broadcast discovery, use the PC address shown in the dialog.
 
@@ -125,6 +131,13 @@ To build the Android release, run `python3 scripts/android_setup.py` once. Set `
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.0.8-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.1.0-beta-windows-x64.zip`.
 
 The expected Android signing certificate SHA-256 is `ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb`. The build helper also reads the original keystore from `.private/android-signing.p12` and the password from `.private/android-signing-password`. Git ignores the `.private` directory. Restrict access to it to the Windows account or Unix user that signs the release. User libraries and downloaded music are stored separately from the app.
+
+
+### iOS build
+
+On a Mac with Xcode and Python 3.14, run `python3 scripts/build_ios.py`. It creates a simulator bundle and an iPhone IPA for Apple signing, using the bundled CPython engine. The GitHub workflow builds both packages and launches the app in an iOS simulator.
+
+The iOS WebView uses a loopback server on the device and keeps the library in the app’s private storage. For phone pairing, iOS may require local network permission. Use the PC’s displayed address if automatic discovery is unavailable.
