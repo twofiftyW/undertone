@@ -59,7 +59,7 @@ class MainActivity : Activity() {
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest): WebResourceResponse? {
                 val response = loader.shouldInterceptRequest(request.url)
                 if (response != null && request.url.path == "/assets/index.html") {
-                    response.responseHeaders = mapOf("Content-Security-Policy" to "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src 'self' https://discoveryprovider.audius.co https://api.audius.co; object-src 'none'; frame-src 'none'; base-uri 'self'")
+                    response.responseHeaders = mapOf("Content-Security-Policy" to "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src 'self' https://discoveryprovider.audius.co https://api.audius.co https://*.workers.dev; object-src 'none'; frame-src 'none'; base-uri 'self'")
                 }
                 return response
             }
@@ -267,6 +267,11 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     @JavascriptInterface fun endImport(token: String): String = reply { importJob(token).deleteRecursively() }
     @JavascriptInterface fun spotifyHelp(): String = reply {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.spotify.com/account/privacy/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
+    }
+
+    @JavascriptInterface fun githubSignIn(): String = reply {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/login/device")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
     }
 
     @JavascriptInterface fun loadLibrary(): String = libraryWriter.submit<String> { readLibrary() }.get()

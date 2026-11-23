@@ -1,0 +1,14 @@
+{
+  "name": "undertone-accounts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test accounts.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "2.0.0-rc.4",
+    "cf": "1.0.0-rc.4",
+    "miniflare": "5.20261119.0-beta",
+    "vite": "8.3.8"
+  }
+}

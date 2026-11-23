@@ -9,6 +9,7 @@ import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
 import { TrackWindows } from './track-window.js';
 import { appUpdates } from './updates.js';
+import { accountSettings } from './accounts.js';
 import { swipeToQueue } from './swipe.js';
 import { appLanguage, setLanguage, tr, countLabel, translateStatic } from './i18n.js';
 
@@ -175,17 +176,19 @@ async function loadLibrary() {
   setRange($("#volume"));
 }
 
-function saveLibrary() {
+function saveLibrary({ cloud = true } = {}) {
   if (!storageReady) {
     toast(tr("Your library could not be opened. Restart the app before saving changes."));
     return Promise.reject(new Error(tr("Storage unavailable")));
   }
   const keep = new Set([...library.liked, ...library.imports, ...library.recent, ...library.playlists.flatMap((p) => p.trackIds), ...Object.keys(library.downloads || {})]);
-  for (const id of Object.keys(library.tracks)) if (!keep.has(id)) delete library.tracks[id];
+  for (const [id, track] of Object.entries(library.tracks)) {
+    if (!keep.has(id) && !(track.source === 'local' && track.fileId)) delete library.tracks[id];
+  }
   const snapshot = nativeAudio ? JSON.stringify(library) : structuredClone(library);
   const operation = saveChain.then(() => native ? native.invoke("save_library", { library: snapshot }) : idbWrite("library", "state", snapshot));
   saveChain = operation.catch(() => {});
-  return operation.catch((error) => {
+  return operation.then(() => { if (cloud) account.changed(); }).catch((error) => {
     console.error(error);
     toast(tr("Couldn’t save your changes. Check that your device has free space."), 7000);
     throw error;
@@ -259,7 +262,7 @@ function trackRows(list, albumId = "", playlistPositions = null, trackPositions 
     <div class="track-row ${track.source === "unmatched" ? "unmatched-row" : ""} ${current?.id === track.id ? "current" : ""}" data-track-id="${h(track.id)}" data-track-position="${position}"${windowed ? ` role="listitem" aria-posinset="${index + 1}" aria-setsize="${list.length}"` : ""}${playlistPositions ? ` data-playlist-index="${playlistPositions[index]}"` : ""}>
       <button class="track-number" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr("Play {title}", { title: track.title }))}"><span>${position + 1}</span>${icon("play")}</button>
       <div class="row-song"><button class="thumb art-placeholder" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}" aria-label="${h(tr("Play {title}", { title: track.title }))}">${art(track)}</button><div class="song-meta"><button class="song-title" data-action="play" data-id="${h(track.id)}" data-album-id="${h(albumId)}">${h(track.title)}</button><div class="row-artists">${track.source === "unmatched" ? `<span class="unmatched-badge">${h(tr("Finding recording"))}</span>` : ""}${canDownload(track) && library.downloads[track.id]?.nativePath ? `<span class="downloaded-badge">${h(tr("Offline"))}</span>` : ""}${track.explicit ? `<span class="explicit-badge" aria-label="${h(tr("Explicit"))}">E</span>` : ""}${artistLinks(track)}${track.kind === "video" ? `<span class="video-badge">${h(tr("VIDEO"))}</span>` : ""}</div></div></div>
-      <span class="row-source">${track.album?.id ? `<button class="album-link" data-action="open-album" data-id="${h(track.album.id)}">${h(track.album.title)}</button>` : track.source === "local" ? tr("Your files · Offline") : track.source === "monochrome" ? "Monochrome" : track.source === "unmatched" ? tr("Spotify import · Choose recording") : track.source === "youtube" ? "YouTube" : "Audius"}</span>
+      <span class="row-source">${track.album?.id ? `<button class="album-link" data-action="open-album" data-id="${h(track.album.id)}">${h(track.album.title)}</button>` : track.source === "local" ? tr(track.fileId ? "Your files · Offline" : "Local file · Import to play") : track.source === "monochrome" ? "Monochrome" : track.source === "unmatched" ? tr("Spotify import · Choose recording") : track.source === "youtube" ? "YouTube" : "Audius"}</span>
       <span class="row-duration" data-duration-for="${h(track.id)}">${track.duration ? formatTime(track.duration) : "—"}</span><span class="row-actions"><button class="icon-btn add-queue-button" data-action="queue-add-track" data-id="${h(track.id)}" aria-label="${h(tr('Add {title} to queue', { title: track.title }))}" title="${h(tr("Add to queue"))}">${icon("plus")}</button><button class="icon-btn ${liked ? "liked" : ""}" data-action="like" data-id="${h(track.id)}" aria-label="${liked ? tr("Unlike") : tr("Like")} ${h(track.title)}" aria-pressed="${liked}">${icon("heart")}</button><button class="icon-btn" data-action="track-menu" data-id="${h(track.id)}" aria-label="${h(tr('More options for {title}', { title: track.title }))}">${icon("more")}</button></span>
     </div>`;
   };
@@ -759,7 +762,7 @@ function recordRecent(track, playedAt) {
 async function resolvePlaybackSource(track, force = false, offlineOnly = false) {
   if (track.source === 'local') {
     if (native && track.nativePath) return { url: linuxPlayback ? track.nativePath : native.convertFileSrc(track.nativePath) };
-    const file = await idbRequest(db.transaction('files').objectStore('files').get(track.fileId));
+    const file = !native && track.fileId && await idbRequest(db.transaction('files').objectStore('files').get(track.fileId));
     if (!file) throw new Error(tr("That imported file is missing. Import it again."));
     const objectURL = URL.createObjectURL(file);
     return { url: objectURL, objectURL };
@@ -990,12 +993,13 @@ let settingsTab = 'appearance';
 function settingsHeader(tab) {
   settingsTab = tab;
   const tabs = [['appearance', 'Appearance'], ['language', 'Language'], ['playback', 'Playback'],
-    ...(deviceStorage ? [['devices', 'Devices']] : []), ...(updates ? [['updates', 'Updates']] : []), ['about', 'About']];
+    ['account', 'Account'], ...(deviceStorage ? [['devices', 'Devices']] : []), ...(updates ? [['updates', 'Updates']] : []), ['about', 'About']];
   return `${dialogTop(tr("Settings"))}<nav class="settings-tabs" aria-label="${h(tr("Settings"))}">${tabs.map(([id, title]) =>
     `<button type="button" data-action="settings" data-tab="${id}" aria-current="${tab === id ? 'page' : 'false'}">${h(tr(title))}</button>`).join('')}</nav>`;
 }
 
 function openSettings(tab = settingsTab) {
+  if (tab === 'account') return account.open();
   if (tab === 'devices' && deviceStorage) return link.open();
   if (tab === 'updates' && updates) return updates.settings();
   if (tab === 'playback') return showAudioOutput();
@@ -1114,7 +1118,7 @@ async function readLocalAudio(file) {
   const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
   const id = `local:${hash}`;
   const previous = library.tracks[id];
-  if (previous && await isDuplicateImport(library.imports.includes(id), previous, file.size, platform === "android" ? native : null) && library.tracks[id]) {
+  if (previous?.fileId && await isDuplicateImport(library.imports.includes(id), previous, file.size, mobileApp ? native : null)) {
     return { id };
   }
   const extension = file.name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || "audio";
@@ -1204,8 +1208,10 @@ async function removeLocal(id) {
   tracks.delete(id);
   await saveLibrary();
   syncQueue();
-  if (native) await native.invoke("delete_audio", { id: track.fileId });
-  else await idbWrite("files", track.fileId, undefined);
+  if (track.fileId) {
+    if (native) await native.invoke("delete_audio", { id: track.fileId });
+    else await idbWrite("files", track.fileId, undefined);
+  }
   closeDialog();
   render();
   updatePlayer();
@@ -1688,6 +1694,10 @@ async function matchSpotifyRemaining(retryMisses = true) {
 const recordingLookups = new Map();
 
 async function playableRecording(track) {
+  if (track.source === 'local' && !(native ? track.nativePath : track.fileId)) {
+    toast(tr("That imported file is missing. Import it again."));
+    return null;
+  }
   if (track.source !== 'unmatched') return track;
   if (recordingLookups.has(track.id)) return recordingLookups.get(track.id);
   const lookup = (async () => {
@@ -1753,7 +1763,19 @@ const link = deviceLink({ native, android: mobileApp, platform, openDialog,
 const updates = deviceStorage ? appUpdates({ platform, native, dialog, openDialog, closeDialog, dialogTop,
   settingsHeader: () => settingsHeader('updates'), toast, flush: () => saveChain }) : null;
 
+const account = accountSettings({
+  dialog, dialogTop: () => settingsHeader('account'), openDialog, native, platform, toast,
+  readLibrary: () => library, persist: () => saveLibrary({ cloud: false }),
+  onLibraryChange: () => {
+    Object.values(library.tracks).forEach(track => tracks.set(track.id, track));
+    library.followedArtists.forEach(artist => artists.set(artist.id, artist));
+    render();
+    updatePlayer();
+  }
+});
+
 const actions = {
+  ...account.actions,
   ...updates?.actions,
   ...link.actions,
   'set-language': button => changeLanguage(button.dataset.lang),
@@ -1925,6 +1947,7 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
+  if (event.target.id === 'account-sign-in') { event.preventDefault(); await account.submit(event.target); return; }
   if (event.target.id === 'recording-search') {
     event.preventDefault();
     const query = event.target.elements.query.value.trim();
@@ -2178,3 +2201,4 @@ render();
 loadCatalog();
 
 updates?.start();
+if (storageReady) account.start().catch(console.error);

@@ -123,3 +123,9 @@ dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
 .pair-request { display:grid; gap:5px; margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
 .pair-request small { color:var(--muted); }
 .pair-request .dialog-buttons { margin-top:4px; flex-wrap:wrap; }
+#account-sign-in label, .account-code label { display:block; margin-bottom:6px; color:var(--secondary); font-size:13px; }
+#account-sign-in .dialog-input, .account-code .dialog-input { width:100%; }
+.account-code { margin:14px 0; }
+.account-code .dialog-input { font-family:monospace; }
+.account-code button { margin-top:8px; }
+.dialog-buttons a.primary-btn { display:inline-flex; align-items:center; text-decoration:none; }

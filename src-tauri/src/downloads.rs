@@ -81,8 +81,7 @@ pub async fn parse_spotify(app: tauri::AppHandle, request: tauri::ipc::Request<'
     crate::music::engine(&app, "spotify_parse", json!({"path": path.to_string_lossy(), "filename": filename}), Duration::from_secs(60)).await
 }
 
-#[tauri::command]
-pub fn spotify_help() -> Result<(), String> {
+fn open_external(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut opener = {
         use std::os::windows::process::CommandExt;
@@ -92,8 +91,19 @@ pub fn spotify_help() -> Result<(), String> {
     };
     #[cfg(target_os = "linux")]
     let mut opener = std::process::Command::new("xdg-open");
-    opener.arg("https://www.spotify.com/account/privacy/")
+    opener.arg(url)
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .spawn().map_err(|_| "Open Spotify’s account privacy page to request your account-data export".to_owned())?;
+        .spawn().map_err(|_| "Could not open your web browser".to_owned())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn spotify_help() -> Result<(), String> {
+    open_external("https://www.spotify.com/account/privacy/")
+        .map_err(|_| "Open Spotify’s account privacy page to request your account-data export".to_owned())
+}
+
+#[tauri::command]
+pub fn github_sign_in() -> Result<(), String> {
+    open_external("https://github.com/login/device")
 }
