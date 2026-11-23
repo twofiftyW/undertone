@@ -44,6 +44,7 @@ class IosBridgeTest(unittest.TestCase):
                     with self.assertRaises(urllib.error.HTTPError) as rejected:
                         urllib.request.urlopen(host + '/index.html', timeout=3)
                     self.assertEqual(rejected.exception.code, 404)
+                    rejected.exception.close()
                 finally:
                     server.shutdown()
                     thread.join()

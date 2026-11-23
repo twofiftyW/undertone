@@ -149,11 +149,11 @@ with ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler) as server:
         server.shutdown()
         serving.join()
 
-with TemporaryDirectory() as folder, patch.object(backend, 'CACHE', Path(folder)):
+with TemporaryDirectory() as folder, patch('backend.CACHE', Path(folder)):
     first = {'id': 'first-candidate'}
     second = {'id': 'second-candidate'}
-    with patch.object(backend, 'match_recording', return_value={'track': None, 'candidates': [first, second]}):
+    with patch('backend.match_recording', return_value={'track': None, 'candidates': [first, second]}):
         seed = {'title': 'Test title', 'artist': 'Test artist'}
-        manual = backend.dispatch('match', {'tracks': [seed]})['matches'][0]
-        automatic = backend.dispatch('match', {'tracks': [seed], 'includeCandidates': False})['matches'][0]
+        manual = dispatch('match', {'tracks': [seed]})['matches'][0]
+        automatic = dispatch('match', {'tracks': [seed], 'includeCandidates': False})['matches'][0]
         assert manual['track'] is None and manual['candidates'][0] == automatic['track'] == first
