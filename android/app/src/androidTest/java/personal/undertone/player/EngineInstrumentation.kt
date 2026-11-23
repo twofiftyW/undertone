@@ -358,7 +358,7 @@ class EngineInstrumentation : Instrumentation() {
 
     private fun checkBackgroundJobs(activity: Activity) {
         val context = targetContext
-        val tracks = JSONArray((1..6).map { JSONObject().put("id", "15927791321693798$it").put("source", "monochrome") })
+        val tracks = JSONArray((1..6).map { JSONObject().put("id", "70000000000000000$it").put("source", "monochrome") })
         Engine.call(context, "download_job_status", JSONObject())
         val python = Python.getInstance()
         val builtins = python.getModule("builtins")

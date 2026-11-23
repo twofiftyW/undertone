@@ -56,11 +56,12 @@ def build(sdk, xcframework, version):
         shutil.copy2(source, engine)
     shutil.copy2(ROOT / "ios/runtime.py", engine)
 
-    run(sys.executable, "-m", "pip", "install", "--only-binary=:all:", "--target", str(engine),
-        "--no-compile", "-r", str(ROOT / "music/requirements.txt"), "yt-dlp==2026.10.26")
+    # Requests and the catalog dependencies must be platform-independent in this bundle.
+    run(sys.executable, "-m", "pip", "install", "--only-binary=:all:", "--platform", "any",
+        "--target", str(engine), "--no-compile", "-r", str(ROOT / "music/requirements.txt"), "yt-dlp==2026.10.26")
     run("xcrun", "--sdk", sdk, "clang", "-target", target, "-fobjc-arc", "-O2",
         "-I", str(slice_path / "include/python3.14"), "-F", str(slice_path),
-        "-framework", "Python", "-framework", "UIKit", "-framework", "WebKit", "-framework", "AVFoundation",
+        "-framework", "Python", "-framework", "UIKit", "-framework", "CoreGraphics", "-framework", "WebKit", "-framework", "AVFoundation",
         "-Wl,-rpath,@executable_path/Frameworks", str(ROOT / "ios/main.m"), "-o", str(app / "Undertone"))
     for scale in ("2x", "3x"):
         shutil.copy2(ROOT / "src-tauri/icons/ios" / f"AppIcon-60x60@{scale}.png", app / f"UndertoneIcon@{scale}.png")
