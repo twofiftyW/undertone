@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'music'))
 import backend, monochrome, device_sync, android_bridge
+from discovery_test import pair_with_decision
 
 seed = {'artist': 'DVRST', 'title': 'Close Eyes', 'duration': 132}
 youtube = {'id': 'youtube:ao4RCon11eY', 'remoteId': 'ao4RCon11eY', 'source': 'youtube', 'kind': 'song', 'title': 'Close Eyes', 'artist': 'DVRST', 'artists': [{'name': 'DVRST', 'id': ''}], 'duration': 132, 'album': {'title': ''}}
@@ -47,16 +48,16 @@ with tempfile.TemporaryDirectory() as folder:
     address = f'127.0.0.1:{server.server_port}'
     try:
         try:
-            device_sync.connection(address, '0' * 16, path='/pair', body={'code': server.pin})
+            device_sync.connection(address, '0' * 64, path='/pair/result', body={})
             raise AssertionError('Wrong PC identity was accepted')
         except ValueError:
-            assert server.attempts == 0, 'Credentials were sent before checking the PC certificate'
+            assert not server.pairings, 'Credentials were sent before checking the PC certificate'
         try:
             device_sync.connection(address, server.fingerprint)
             raise AssertionError('Unauthenticated library access succeeded')
         except ValueError:
             pass
-        result = device_sync.pair(phone, address, server.details()['code'])
+        result = pair_with_decision(phone, server)
         assert result['paired'] and (phone / 'pc-link.json').is_file()
         if os.name == 'posix':
             assert (phone / 'pc-link.json').stat().st_mode & 0o777 == 0o600

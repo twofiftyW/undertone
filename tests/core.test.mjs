@@ -36,10 +36,10 @@ test('playlist track search preserves playback and stored indexes for repeated s
   assert.equal(filterPlaylistTracks(trackIds, sorted, '').tracks, sorted);
 });
 
-test('preloading uses the last ten seconds of a streaming track', () => {
-  const audio = { duration: 120, currentTime: 109.9, paused: false };
+test('preloading uses the last twenty seconds of a streaming track', () => {
+  const audio = { duration: 120, currentTime: 99.9, paused: false };
   assert.equal(inPreloadWindow(audio), false);
-  assert.equal(inPreloadWindow({ ...audio, currentTime: 110 }), true);
+  assert.equal(inPreloadWindow({ ...audio, currentTime: 100 }), true);
   assert.equal(inPreloadWindow({ ...audio, currentTime: 116, paused: true }), false);
   assert.equal(inPreloadWindow({ ...audio, currentTime: 120 }), false);
   assert.equal(inPreloadWindow({ ...audio, duration: Infinity }), false);
@@ -70,7 +70,7 @@ test('Windows switches to the element that is still buffering the selected occur
   assert.equal(player.takePreloaded('second-occurrence'), true);
   await player.play();
   assert.equal(next.sourceChanges, 1);
-  assert.equal(next.loads, 0);
+  assert.equal(next.loads, 1);
   assert.equal(next.plays, 1);
   assert.equal(first.loads, 1);
   assert.equal(next.volume, 0.25);
@@ -866,4 +866,23 @@ test('import into an existing playlist appends in source order and can be retrie
   appendSpotifyToPlaylist(other, retry.additions);
   assert.deepEqual(other.trackIds.slice(1), target.trackIds.slice(2));
   assert.throws(() => appendSpotifyToPlaylist(undefined, retry.additions), /playlist is gone/);
+});
+
+test('a manual correction remaps playlist and likes while retaining the downloaded file', () => {
+  const library = emptyLibrary();
+  const previous = { id: 'youtube:wrong', source: 'youtube', title: 'Wrong recording',
+    spotifyUris: ['spotify:track:record'], importRecord: { title: 'Intended song', artist: 'Artist' } };
+  const correct = { id: 'monochrome:correct', source: 'monochrome', title: 'Intended song' };
+  library.tracks[previous.id] = previous;
+  library.downloads[previous.id] = { nativePath: '/saved/old.m4a' };
+  library.playlists = [{ trackIds: [previous.id, previous.id] }];
+  library.liked = [previous.id];
+  assert.equal(replaceLibraryTracks(library, [[previous.id, correct]]).size, 0);
+  replaceLibraryTracks(library, [[previous.id, correct]], { correction: true });
+  assert.deepEqual(library.playlists[0].trackIds, [correct.id, correct.id]);
+  assert.deepEqual(library.liked, [correct.id]);
+  assert.deepEqual(library.tracks[correct.id].importRecord, previous.importRecord);
+  assert.deepEqual(library.tracks[correct.id].spotifyUris, previous.spotifyUris);
+  assert.equal(library.downloads[previous.id].nativePath, '/saved/old.m4a');
+  assert.equal(library.tracks[previous.id].spotifyUris, undefined);
 });

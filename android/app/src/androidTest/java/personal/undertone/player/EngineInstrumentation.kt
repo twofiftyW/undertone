@@ -34,10 +34,10 @@ class EngineInstrumentation : Instrumentation() {
                     val builtins = python.getModule("builtins")
                     builtins.callAttr("setattr", updates, "fixture_apk", context.cacheDir.resolve("fixture-update.apk").path)
                     builtins.callAttr("exec", """
-                        def latest_release(session, token, current, platform):
-                            return {"version": "0.0.9"}
+                        def latest_release(session, current, platform):
+                            return {"version": "0.1.1-beta"}
 
-                        def download_release(session, token, offer, destination):
+                        def download_release(session, offer, destination):
                             shutil.copyfile(fixture_apk, destination)
                     """.trimIndent(), updates["__dict__"])
                     val activity = startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -69,7 +69,7 @@ class EngineInstrumentation : Instrumentation() {
                     val bridge = PlaybackBridge(context)
                     try { checkStreamingPreload(bridge) }
                     finally { bridge.command("stop", ""); runOnMainSync { activity.finish() } }
-                    results.putString("result", "PASS: last-ten-second preload, skip during preparation, and natural handoff")
+                    results.putString("result", "PASS: last-twenty-second preload, skip during preparation, and natural handoff")
                     finish(Activity.RESULT_OK, results)
                     return@Thread
                 }
@@ -113,8 +113,7 @@ class EngineInstrumentation : Instrumentation() {
                 bridge.command("stop", "")
                 Thread.sleep(500)
                 val address = arguments.getString("address") ?: error("Missing test PC address")
-                val code = arguments.getString("code") ?: error("Missing test pairing code")
-                Engine.call(context, "link_pair", JSONObject().put("address", address).put("code", code))
+                Engine.call(context, "link_pair", JSONObject().put("address", address).put("name", "Test Android"))
                 val copied = Engine.call(context, "link_pull", JSONObject().put("audio", true))
                 check(copied.getInt("copied") == 1) { "Android did not copy the saved song" }
                 val library = copied.getJSONObject("library")
@@ -200,12 +199,12 @@ class EngineInstrumentation : Instrumentation() {
             it.optString("session") == "preload-test" && it.optBoolean("playing") && it.optDouble("duration") > 20 && it.optDouble("position") > 0.5
         }
         val playing = JSONObject(PlaybackService.snapshot)
-        check(playing.optString("nextKey").isEmpty()) { "Preloading started more than ten seconds before the end" }
-        bridge.command("seek", (playing.getDouble("duration") - 8).toString())
-        waitFor("The last-ten-second preload did not start", interval = 15) { it.optString("nextKey") == "preload-target" }
+        check(playing.optString("nextKey").isEmpty()) { "Preloading started more than twenty seconds before the end" }
+        bridge.command("seek", (playing.getDouble("duration") - 17).toString())
+        waitFor("The last-twenty-second preload did not start", interval = 15) { it.optString("nextKey") == "preload-target" }
         val pending = JSONObject(PlaybackService.snapshot)
         check(!pending.optBoolean("nextPrepared")) { "The stream was ready before the in-progress skip could be tested" }
-        check(pending.getDouble("duration") - pending.getDouble("position") in 0.0..10.0)
+        check(pending.getDouble("duration") - pending.getDouble("position") in 0.0..20.0)
         bridge.command("next", "")
         waitFor("Next did not adopt the pending stream") {
             it.optString("key") == "preload-target" && it.optInt("handoffs") == pending.optInt("handoffs") + 1 && it.optBoolean("playing")
@@ -240,7 +239,7 @@ class EngineInstrumentation : Instrumentation() {
         bridge.loadQueue(queue(1, original, copy))
         waitFor("The offline shuffle did not start") {
             it.optString("session") == "shuffle-test" && it.optString("key") == "second-occurrence" &&
-                it.optString("nextKey").isEmpty() && it.optBoolean("playing")
+                it.optBoolean("playing")
         }
         bridge.command("next", "")
         waitFor("Explicit Next did not use the shuffle order") {
@@ -248,15 +247,19 @@ class EngineInstrumentation : Instrumentation() {
         }
         bridge.command("previous", "")
         waitFor("Previous did not return to the first shuffled occurrence") {
-            it.optString("key") == "second-occurrence" && it.optString("nextKey").isEmpty() && it.optBoolean("playing")
+            it.optString("key") == "second-occurrence" && it.optBoolean("playing")
         }
         bridge.replaceQueue(queue(0, copy, original))
         waitFor("Reordering changed shuffle history or the current occurrence") {
-            it.optInt("index") == 0 && it.optString("key") == "second-occurrence" && it.optString("nextKey").isEmpty()
+            it.optInt("index") == 0 && it.optString("key") == "second-occurrence"
         }
+        waitFor("The next offline occurrence was not prepared") {
+            it.optString("nextKey") == "fixture-d" && it.optBoolean("nextPrepared")
+        }
+        val before = JSONObject(PlaybackService.snapshot).getInt("handoffs")
         bridge.command("seek", "2.6")
         waitFor("Natural end did not start the next offline occurrence") {
-            it.optString("key") == "fixture-d" && it.optBoolean("playing") && it.optInt("index") == 1
+            it.optString("key") == "fixture-d" && it.optBoolean("playing") && it.optInt("index") == 1 && it.optInt("handoffs") == before + 1
         }
         val finalSerial = JSONObject(PlaybackService.snapshot).getInt("serial")
         waitFor("Shuffled queue repeated after its final occurrence") {
@@ -297,8 +300,8 @@ class EngineInstrumentation : Instrumentation() {
             return
         }
         val menu = js("document.querySelector('.topbar-actions')?.innerHTML")
-        check(menu.contains("language-button")) { "Language button missing from loaded header: " + menu.take(450) }
-        js("document.querySelector('.language-button').click()")
+        check(menu.contains("settings-button") && !menu.contains("language-button")) { "Settings header did not replace the old controls" }
+        js("document.querySelector('.settings-button').click(); document.querySelector('[data-tab=language]').click()")
         await("Language dialog did not open", "!!document.querySelector('#dialog[open] [data-lang=ru]')")
         js("document.querySelector('[data-lang=ru]').click()")
         await("Language setting did not update the home page", "document.documentElement.lang === 'ru' && document.querySelector('.home-heading h1')?.textContent === 'Для вас'")
@@ -352,7 +355,7 @@ class EngineInstrumentation : Instrumentation() {
         val previousPage = js("performance.timeOrigin")
         reload()
         await("The update preference did not survive a reload", "performance.timeOrigin !== $previousPage && document.querySelector('#update-available').offsetWidth > 0 && !document.querySelector('#dialog').open")
-        js("document.querySelector('.avatar').click(); document.querySelector('[data-action=update-settings]').click()")
+        js("document.querySelector('.settings-button').click(); document.querySelector('[data-tab=updates]').click()")
         await("Settings did not reflect the preference", "document.querySelector('#update-skip-settings')?.checked === true")
         js("document.querySelector('#update-skip-settings').click(); document.querySelector('[data-action=close-dialog]').click()")
         await("Re-enabling prompts did not open the offer", "!!document.querySelector('#dialog[open] [data-action=update-install]')")
@@ -387,7 +390,7 @@ class EngineInstrumentation : Instrumentation() {
         await("Song title search did not keep both occurrences", "document.querySelectorAll('#playlist-search-results .track-row').length === 2")
         check(type("moon unit") == "true")
         await("Artist search did not preserve the stored occurrence", "document.querySelectorAll('#playlist-search-results .track-row').length === 2 && !!document.querySelector('#playlist-search-results [data-track-position=\"3\"][data-playlist-index=\"3\"]')")
-        js("document.querySelector('#playlist-search-results [data-track-position=\"3\"] .song-title').click()")
+        js("document.querySelector('#playlist-search-results [data-track-position=\"3\"] .row-duration').click()")
         waitFor("The second match did not play in the full playlist") {
             val queue = JSONObject(PlaybackService.queueSnapshot)
             it.optBoolean("playing") && it.optInt("index") == 3 && queue.getJSONArray("tracks").length() == 104

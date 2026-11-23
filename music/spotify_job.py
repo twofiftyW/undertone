@@ -115,20 +115,24 @@ def start(root, args, kind='spotify'):
 
 
 def step(root, job_id, kind='spotify'):
-    import backend
-    import offline
+    if kind == 'download':
+        from offline import DOWNLOAD_BATCH, download_batch
+        limit = DOWNLOAD_BATCH
+    else:
+        from backend import dispatch
+        limit = 4
     with _workers[kind]:
         with database(root, kind=kind) as db:
             current = status(db)
             if current['jobId'] != job_id or current['state'] != 'running':
                 return current
             batch = db.execute('''SELECT position,seed FROM item WHERE failed=0 AND result_seq IS NULL
-                                  ORDER BY position LIMIT ?''', (offline.DOWNLOAD_BATCH if kind == 'download' else backend.MATCH_BATCH,)).fetchall()
+                                  ORDER BY position LIMIT ?''', (limit,)).fetchall()
         failure_reason = 'offline'
         if batch:
             try:
                 seeds = [json.loads(row['seed']) for row in batch]
-                matches = (offline.download_batch(seeds) if kind == 'download' else backend.dispatch('match', {
+                matches = (download_batch(seeds) if kind == 'download' else dispatch('match', {
                     'tracks': seeds, 'includeCandidates': False
                 })['matches'])
                 if len(matches) != len(batch) or not all(isinstance(match, dict) for match in matches):

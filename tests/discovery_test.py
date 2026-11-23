@@ -31,6 +31,22 @@ def sharing_pc(root, name='Studio', port=0):
         thread.join(timeout=2)
 
 
+def pair_with_decision(phone, server, approved=True):
+    from concurrent.futures import ThreadPoolExecutor
+    address = f'{server.server_address[0]}:{server.server_port}'
+    with ThreadPoolExecutor(1) as executor:
+        request = executor.submit(device_sync.pair, phone, address, 'Test phone')
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            pending = json.loads(server.pairing_path.read_text())
+            if pending:
+                assert not request.done(), 'Phone paired without desktop confirmation'
+                server.decision_path(pending[0]['id']).write_text('confirm' if approved else 'decline')
+                break
+            time.sleep(0.02)
+        return request.result(timeout=8)
+
+
 class DiscoveryTest(unittest.TestCase):
     def test_pc_invites_only_the_selected_phone(self):
         with closing(device_sync.PhonePresence('Pixel', '127.0.0.1', 0)) as first, \
@@ -104,14 +120,16 @@ class DiscoveryTest(unittest.TestCase):
                 self.assertFalse((phone / 'pc-link.json').exists())
 
                 selected = by_address[second_address]['address']
-                device_sync.pair(phone, selected, second.details()['code'])
+                self.assertEqual(selected, f'127.0.0.1:{second.server_port}')
+                pair_with_decision(phone, second)
                 self.assertEqual(device_sync.pull(phone)['library']['playlists'], [{'id': 'second'}])
                 self.assertEqual(len(first.devices['tokens']), 0)
                 self.assertEqual(len(second.devices['tokens']), 1)
 
                 # A failed switch must leave the existing paired PC usable.
-                with self.assertRaisesRegex(ValueError, 'different PC'):
-                    device_sync.pair(phone, first_address, second.details()['code'])
+                with self.assertRaisesRegex(ValueError, 'declined'):
+                    pair_with_decision(phone, first, approved=False)
+                self.assertEqual(len(first.devices['tokens']), 0)
                 self.assertEqual(device_sync.pull(phone)['deviceId'], second.devices['deviceId'])
             self.assertEqual(device_sync.discover(targets=targets, timeout=0.15), [])
 
@@ -127,7 +145,7 @@ class DiscoveryTest(unittest.TestCase):
                 reply, sender = client.recvfrom(1024)
                 self.assertEqual(sender, server.server_address)
                 self.assertRegex(reply, rb'^UNDERTONE/1 PC ' + nonce + rb' [a-f0-9]{16} Studio\Z')
-                self.assertEqual(server.attempts, 0)
+                self.assertEqual(server.pairings, {})
 
     def test_discards_unrelated_stale_and_duplicate_replies(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as responder:
@@ -167,7 +185,7 @@ class DiscoveryTest(unittest.TestCase):
             with sharing_pc(root / 'pc', port=target[1]) as server:
                 self.assertFalse(server.details()['discoveryAvailable'])
                 self.assertEqual(device_sync.discover(targets=[target], timeout=0.15), [])
-                paired = device_sync.pair(phone, f'{target[0]}:{target[1]}', server.details()['code'])
+                paired = pair_with_decision(phone, server)
                 self.assertTrue(paired['paired'])
 
 

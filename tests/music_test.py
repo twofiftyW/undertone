@@ -95,7 +95,7 @@ print('Spotify retries incomplete catalog lookups and caches completed matches a
 with TemporaryDirectory() as directory, patch('backend.CACHE', Path(directory)), \
      patch('backend.match_recording', return_value={'track': normalized, 'candidates': [normalized]}) as lookup:
     bulk = dispatch('match', {'tracks': [seed, seed], 'includeCandidates': False})['matches']
-    assert bulk == [{'track': normalized}] * 2 and lookup.call_count == 1
+    assert bulk == [{'track': normalized, 'reason': '', 'error': False}] * 2 and lookup.call_count == 1
     for i in range(230):
         dispatch('match', {'tracks': [{'title': 'Other ' + str(i), 'artist': 'Test'}]})
     assert match_import()['candidates'] == [normalized] and lookup.call_count == 231
@@ -148,3 +148,12 @@ with ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler) as server:
     finally:
         server.shutdown()
         serving.join()
+
+with tempfile.TemporaryDirectory() as folder, patch.object(backend, 'CACHE', Path(folder)):
+    first = {'id': 'first-candidate'}
+    second = {'id': 'second-candidate'}
+    with patch.object(backend, 'match_recording', return_value={'track': None, 'candidates': [first, second]}):
+        seed = {'title': 'Test title', 'artist': 'Test artist'}
+        manual = backend.dispatch('match', {'tracks': [seed]})['matches'][0]
+        automatic = backend.dispatch('match', {'tracks': [seed], 'includeCandidates': False})['matches'][0]
+        assert manual['track'] is None and manual['candidates'][0] == automatic['track'] == first
