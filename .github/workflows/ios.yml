@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +24,7 @@ jobs:
         with:
           python-version: '3.14'
       - name: Build iOS packages
+        id: compile
         run: python3 scripts/build_ios.py
       - name: Verify app launches in iOS Simulator
         timeout-minutes: 7
@@ -34,7 +35,8 @@ jobs:
           xcrun simctl install "$device" dist/ios/iphonesimulator/Undertone.app
           xcrun simctl launch "$device" personal.undertone.player
           for attempt in {1..15}; do
-            if xcrun simctl spawn "$device" log show --last 2m --predicate 'eventMessage CONTAINS "Undertone iOS UI ready"' | grep -q 'Undertone iOS UI ready'; then
+            xcrun simctl spawn "$device" log show --last 2m --predicate 'eventMessage CONTAINS "Undertone iOS UI ready"' > .tools/ios-launch.log
+            if grep -q 'Undertone iOS UI ready' .tools/ios-launch.log; then
               xcrun simctl io "$device" screenshot dist/ios-launch.png
               exit 0
             fi
@@ -43,6 +45,7 @@ jobs:
           xcrun simctl spawn "$device" log show --last 3m --predicate 'process == "Undertone"'
           exit 1
       - uses: actions/upload-artifact@v4
+        if: always() && steps.compile.outcome == 'success'
         with:
           name: undertone-ios
           path: |
