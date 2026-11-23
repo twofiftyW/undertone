@@ -5,7 +5,7 @@ const skipPromptKey = 'undertone.update.skipPrompt';
 const declinedKey = 'undertone.update.declinedVersion';
 const checkInterval = 4 * 60 * 60 * 1000;
 
-export function appUpdates({ native, dialog, openDialog, closeDialog, dialogTop, toast, flush }) {
+export function appUpdates({ platform, native, dialog, openDialog, closeDialog, dialogTop, settingsHeader, toast, flush }) {
   const badge = document.querySelector('#update-available');
   const invoke = (operation, value) => native.invoke('app_update', { operation, value });
   const label = (text, vars) => h(tr(text, vars));
@@ -26,9 +26,9 @@ export function appUpdates({ native, dialog, openDialog, closeDialog, dialogTop,
   function updatePrompt() {
     if (!offer || installing) return;
     prompted = offer.version;
-    openDialog(`${dialogTop(tr("Update available"))}<p class="dialog-description">${label("Undertone {version} is ready to install.", { version: offer.version })}</p>
+    openDialog(`${dialogTop(tr("Update available"))}<p class="dialog-description">${label(platform === 'ios' ? "Undertone {version} is available. Sign the iPhone build before installing it." : "Undertone {version} is ready to install.", { version: offer.version })}</p>
       <label class="update-choice"><input type="checkbox" id="update-skip" ${skipPrompt() ? 'checked disabled' : ''}> ${label("Do not show again")}</label>
-      <div class="dialog-buttons"><button class="secondary-btn" data-action="update-later">${label("Later")}</button><button class="primary-btn" data-action="update-install">${label("Install update")}</button></div>`, 'update-offer');
+      <div class="dialog-buttons"><button class="secondary-btn" data-action="update-later">${label("Later")}</button>${platform === 'ios' ? `<a class="primary-btn" href="https://github.com/twofiftyW/undertone/releases/tag/v${encodeURIComponent(offer.version)}">${label("Open iOS release")}</a>` : `<button class="primary-btn" data-action="update-install">${label("Install update")}</button>`}</div>`, 'update-offer');
   }
 
   function maybePrompt() {
@@ -37,17 +37,9 @@ export function appUpdates({ native, dialog, openDialog, closeDialog, dialogTop,
   }
 
   function settings(message = '') {
-    openDialog(`${dialogTop(tr("Update settings"))}
+    openDialog(`${settingsHeader()}
       <p class="dialog-description">${installed.version ? label("Installed version {version}", installed) : ''}</p>
       <label class="update-choice"><input type="checkbox" id="update-skip-settings" ${skipPrompt() ? 'checked' : ''}> ${label("Do not show update prompts")}</label>
-      <div class="update-access">
-        <strong>${label("GitHub access")}</strong>
-        <p class="dialog-description">${label("For the private repository, use a fine-grained token for twofiftyW/undertone with Contents read access.")}</p>
-        <label for="update-token">${label("GitHub access token")}</label>
-        <input id="update-token" type="password" autocomplete="off" spellcheck="false" maxlength="270" placeholder="${label(installed.configured ? "Access saved" : "Paste token")}">
-        <div class="dialog-buttons"><button class="secondary-btn" data-action="update-save-access">${label("Save access")}</button>
-        ${installed.configured ? `<button class="secondary-btn" data-action="update-remove-access">${label("Remove access")}</button>` : ''}</div>
-      </div>
       <p class="dialog-description" id="update-settings-status" role="status">${h(message)}</p>
       <div class="dialog-buttons"><button class="secondary-btn" data-action="update-check-now">${label("Check for updates")}</button>
       ${offer ? `<button class="primary-btn" data-action="update-open">${label("Update available")}</button>` : ''}</div>`, 'update-settings');
@@ -70,21 +62,6 @@ export function appUpdates({ native, dialog, openDialog, closeDialog, dialogTop,
       if (manual && dialog.open && dialog.dataset.kind === 'update-settings') settings(errorMessage(error));
     } finally {
       checking = null;
-    }
-  }
-
-  async function updateAccess(value) {
-    try {
-      if (checking) await checking.catch(() => {});
-      installed = await invoke('token', value);
-      offer = null;
-      renderOffer();
-      if (dialog.open && dialog.dataset.kind === 'update-settings') {
-        settings(installed.configured ? tr("Access saved") : tr("GitHub access removed."));
-      }
-      if (installed.configured) await check(true);
-    } catch (error) {
-      if (dialog.open && dialog.dataset.kind === 'update-settings') settings(errorMessage(error));
     }
   }
 
@@ -114,11 +91,9 @@ export function appUpdates({ native, dialog, openDialog, closeDialog, dialogTop,
       setInterval(() => { if (!document.hidden) check(); }, checkInterval);
     },
     get version() { return installed.version; },
+    settings,
     actions: {
-      'update-settings': () => settings(),
       'update-check-now': () => check(true),
-      'update-save-access': () => updateAccess(document.querySelector('#update-token').value),
-      'update-remove-access': () => updateAccess(''),
       'update-open': updatePrompt,
       'update-later': () => {
         rememberPromptChoice();

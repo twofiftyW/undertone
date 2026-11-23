@@ -22,9 +22,9 @@ object Engine {
 
     fun update(context: Context, operation: String, value: String, destination: String = ""): String {
         initialize(context)
-        val token = context.noBackupFilesDir.resolve("github-update-token")
+        if (operation == "status") context.noBackupFilesDir.resolve("github-update-token").delete()
         return Python.getInstance().getModule("updates").callAttr("rpc",
-            operation, BuildConfig.VERSION_NAME, "android", token.path, value, destination).toString()
+            operation, BuildConfig.VERSION_NAME, "android", value, destination).toString()
     }
 
     fun openPhoneDiscovery(context: Context, name: String): PyObject {

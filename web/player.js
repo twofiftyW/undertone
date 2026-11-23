@@ -1,4 +1,4 @@
-const PRELOAD_WINDOW_SECONDS = 10;
+const PRELOAD_WINDOW_SECONDS = 20;
 
 export function isStreamingAudio(source) {
   try {
@@ -63,6 +63,7 @@ export class BrowserPlayer extends EventTarget {
     const element = this._createAudio();
     element.preload = 'auto';
     element.src = next.url;
+    element.load();
     this._next = { key: next.key, element };
   }
 

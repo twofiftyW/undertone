@@ -10,8 +10,8 @@ android {
         applicationId = "personal.undertone.player"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.0.8"
+        versionCode = 20
+        versionName = "0.1.0-beta"
         testInstrumentationRunner = "personal.undertone.player.EngineInstrumentation"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }

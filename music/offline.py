@@ -1,15 +1,18 @@
 """Download a selected recording with verified ranges and an atomic final rename."""
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import re
 import shutil
 import time
+import uuid
 import requests
 import monochrome
 
 MAX_AUDIO = 512 * 1024 * 1024
 RESERVE = 40 * 1024 * 1024
-RANGE_SIZE = 512 * 1024
+RANGE_SIZE = 4 * 1024 * 1024
+DOWNLOAD_BATCH = 3
 YOUTUBE_FORMATS = ('m4a', 'mp3', 'ogg', 'opus', 'webm')
 
 
@@ -81,7 +84,7 @@ def download(ident, source='monochrome'):
         url = recording['url']
         filename = 'youtube-' + ident + '.' + extension
     destination = root / filename
-    partial = root / (ident + f'.{os.getpid()}.part')
+    partial = root / (ident + f'.{uuid.uuid4().hex}.part')
     written = 0
     total = None
     validator = None
@@ -153,3 +156,14 @@ def download(ident, source='monochrome'):
         return {'nativePath': str(destination), 'bytes': written}
     finally:
         partial.unlink(missing_ok=True)
+
+
+def download_batch(seeds):
+    def fetch(seed):
+        try:
+            return {'file': download(seed['id'], seed['source'])}
+        except (ValueError, OSError) as error:
+            return {'reason': str(error)}
+
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_BATCH) as pool:
+        return list(pool.map(fetch, seeds))

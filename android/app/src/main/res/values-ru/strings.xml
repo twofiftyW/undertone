@@ -9,4 +9,8 @@
     <string name="spotify_finished">Импорт из Spotify завершён</string>
     <string name="spotify_paused">Импорт из Spotify приостановлен</string>
     <string name="spotify_offline">Каталог недоступен. Откройте Undertone, чтобы продолжить.</string>
+    <string name="song_downloads">Скачивание песен</string>
+    <string name="downloads_paused">Скачивание приостановлено</string>
+    <string name="downloads_finished">Скачивание завершено</string>
+    <string name="downloads_progress">Обработано загрузок %1$d из %2$d</string>
 </resources>

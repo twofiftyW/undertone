@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::{io::{BufRead, BufReader}, process::{Child, Stdio}, sync::Mutex};
+use std::{io::{BufRead, BufReader, Write}, process::{Child, Stdio}, sync::Mutex};
 use tauri::{Manager, State};
 
 #[derive(Default)]
@@ -77,12 +77,41 @@ pub fn link_revoke(app: tauri::AppHandle, link: State<'_, Link>) -> Result<(), S
 }
 
 #[tauri::command]
+pub fn link_confirm_pair(app: tauri::AppHandle, id: String, approved: bool) -> Result<(), String> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Invalid pairing request.".into());
+    }
+    let details = link_status(app.clone(), app.state::<Link>())?;
+    if !details["pairingRequests"].as_array().is_some_and(|requests| requests.iter().any(|request| request["id"] == id)) {
+        return Err("The pairing request expired. Try connecting again.".into());
+    }
+    let directory = app.path().app_data_dir().map_err(|error| error.to_string())?.join("link");
+    let mut decision = tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
+    decision.write_all(if approved { b"confirm" } else { b"decline" }).map_err(|error| error.to_string())?;
+    decision.persist_noclobber(directory.join(format!("pair-decision-{id}"))).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn link_status(app: tauri::AppHandle, link: State<'_, Link>) -> Result<Value, String> {
     let mut state = link.0.lock().map_err(|_| "The PC link is unavailable")?;
     if let Some((child, details)) = state.as_mut() {
         if child.try_wait().map_err(|e| e.to_string())?.is_none() {
             let mut result = details.clone();
             if let Ok(path) = app.path().app_data_dir() {
+                if let Ok(bytes) = std::fs::read(path.join("link/pairing-requests.json")) {
+                    if let Ok(mut requests) = serde_json::from_slice::<Vec<Value>>(&bytes) {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |duration| duration.as_millis());
+                        requests.retain(|request| {
+                            let id = request["id"].as_str().unwrap_or_default();
+                            id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                                && u128::from(request["expires"].as_u64().unwrap_or_default()) > now
+                                && !path.join(format!("link/pair-decision-{id}")).exists()
+                        });
+                        result["pairingRequests"] = json!(requests);
+                    }
+                }
                 if let Ok(bytes) = std::fs::read(path.join("link/devices.json")) {
                     if let Ok(devices) = serde_json::from_slice::<Value>(&bytes) { result["pairedDevices"] = json!(devices["tokens"].as_array().map_or(0, Vec::len)); }
                 }

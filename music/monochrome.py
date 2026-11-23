@@ -214,4 +214,4 @@ def choose_recording(seed, candidates):
             score += 100
         ranked.append((score, clear, candidate))
     ranked.sort(key=lambda item: item[0], reverse=True)
-    return {'track': ranked[0][2] if ranked and ranked[0][1] else None, 'candidates': [item[2] for item in ranked[:6]], 'reason': '' if ranked and ranked[0][1] else 'No clear recording match. Choose a recording manually.'}
+    return {'track': ranked[0][2] if ranked and ranked[0][1] else None, 'candidates': [item[2] for item in ranked[:6]], 'reason': '' if ranked and ranked[0][1] else 'No clear recording match.'}

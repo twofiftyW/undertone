@@ -80,7 +80,7 @@ class PlaybackService : Service() {
         @Synchronized fun takeQueue(id: String): String? = pendingQueues.remove(id)
         private const val CHANNEL = "undertone_playback"
         private const val NOTIFICATION = 14
-        private const val PRELOAD_WINDOW_MS = 10_000L
+        private const val PRELOAD_WINDOW_MS = 20_000L
     }
 
     // The same load can move from the queue to the foreground while it is still resolving or buffering.
@@ -238,15 +238,16 @@ class PlaybackService : Service() {
         publishQueue()
     }
 
-    private fun resolveTrack(load: TrackLoad, track: JSONObject) {
+    private fun resolveTrack(load: TrackLoad, track: JSONObject, offlineOnly: Boolean = false) {
         workers.execute {
             try {
-                val result = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track))
+                val result = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track).put("offlineOnly", offlineOnly))
+                if (result.isNull("url")) { handler.post { if (load === nextLoad) load.failed = true }; return@execute }
                 val uri = result.getString("url")
                 require(validSource(uri))
                 handler.post {
                     if (load !== activeLoad && load !== nextLoad) return@post
-                    if (load === nextLoad && connectivity?.activeNetwork == null) { clearNext(); return@post }
+                    if (load === nextLoad && uri.startsWith("https://") && connectivity?.activeNetwork == null) { clearNext(); return@post }
                     try { prepareSource(load, uri) }
                     catch (_: Exception) { loadFailed(load, "This audio stream couldn’t start. Try another recording.") }
                 }
@@ -382,17 +383,15 @@ class PlaybackService : Service() {
     }
 
     private fun prepareNext(playing: Boolean, position: Long, duration: Long) {
-        if (activeLoad?.streaming != true) return
-        val inWindow = playing && duration - position in 1L..PRELOAD_WINDOW_MS
-        if (nextLoad == null && !inWindow) return
-        if (connectivity?.activeNetwork == null) { clearNext(); return }
+        val playingStream = activeLoad?.streaming == true
+        val inWindow = playing && (!playingStream || duration - position in 1L..PRELOAD_WINDOW_MS)
         val upcoming = chooseNext(1, true)
         val key = trackKey(upcoming)
         if (nextLoad?.key != key) clearNext()
-        if (key.isEmpty() || nextLoad != null || !inWindow) return
+        if (key.isEmpty() || upcoming == index || nextLoad != null || !inWindow) return
         val load = TrackLoad(key)
         nextLoad = load
-        resolveTrack(load, tracks.getJSONObject(upcoming))
+        resolveTrack(load, tracks.getJSONObject(upcoming), !playingStream || connectivity?.activeNetwork == null)
     }
 
     private fun loadFailed(load: TrackLoad, message: String) {

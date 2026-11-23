@@ -10,6 +10,7 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
   let choosing = false;
   let pairing = null;
   let phoneScan = null;
+  let requestPolling;
   const presence = android && native ? phoneVisibility(native, dialog) : null;
 
   function visible(element) {
@@ -31,10 +32,8 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
         <label class="dialog-field" for="link-address">${h(tr("PC ADDRESS"))}</label>
         <input class="dialog-input" id="link-address" name="address" placeholder="192.168.1.10:47832" autocomplete="off" required disabled>
       </div>
-      <label class="dialog-field" for="link-code">${h(tr("PAIRING CODE"))}</label>
-      <input class="dialog-input link-value" id="link-code" name="code" placeholder="xxxx-xxxx-xxxx-xxxx-123456" autocomplete="off" autocapitalize="none" spellcheck="false" required>
       <div class="dialog-buttons">${state.paired ? `<button type="button" class="secondary-btn" data-action="link-cancel-choice">${h(tr("Cancel"))}</button>` : ''}
-        <button type="submit" class="primary-btn">${h(tr("Pair with PC"))}</button>
+        <button type="submit" class="primary-btn">${h(tr("Confirm on this phone"))}</button>
       </div></fieldset></form>`;
   }
 
@@ -134,7 +133,7 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
     status.textContent = tr('Sending invitation…');
     try {
       await native.invoke('link_invite_phone', { id: phone.value, address: phone.dataset.address });
-      if (visible(panel)) status.textContent = tr('Invitation sent to “{name}”. Accept it on the phone and enter the pairing code below.', { name: phone.dataset.name });
+      if (visible(panel)) status.textContent = tr('Invitation sent to “{name}”. Confirm on the phone, then approve here.', { name: phone.dataset.name });
     } catch {
       if (visible(panel)) status.textContent = tr('The phone did not respond. Open Connect PC on the phone and search again.');
     } finally {
@@ -169,19 +168,23 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
     select.add(invited, select.querySelector('optgroup'));
     select.value = request.address;
     select.dispatchEvent(new Event('change'));
-    form.elements.code.focus();
+    form.requestSubmit();
   }
 
   function render() {
     const message = `<p class="link-message link-feedback" role="status">${h(tr(note))}</p>`;
     if (!android) {
-      let instructions = '';
-      if (state.running) {
-        if (state.discoveryAvailable === false) instructions = tr("Automatic discovery is unavailable. Enter the address below manually, then enter the pairing code.");
-        else if (state.discoveryName) instructions = tr("Choose “{name}” and enter the pairing code below.", { name: state.discoveryName });
-        else instructions = tr("Choose this PC and enter the pairing code below.");
-      }
-      openDialog(`${dialogTop(tr("Connect your phone"))}<p class="dialog-description">${h(tr("Connect both devices to the same Wi-Fi. On your phone, open Library → Connect PC."))}</p>${state.running ? `${busy ? '' : phonePicker()}<p class="dialog-description">${h(instructions)}</p><label class="dialog-field" for="pc-address">${h(tr("PC ADDRESS"))}</label><input class="dialog-input link-value" id="pc-address" readonly value="${h(state.addresses?.[0] || tr("No local Wi-Fi address found"))}">${state.addresses?.length > 1 ? `<p class="dialog-description">${h(tr("Other address:"))} ${h(state.addresses.slice(1).join(', '))}</p>` : ''}<label class="dialog-field" for="pc-code">${h(tr("PAIRING CODE · VALID FOR 10 MINUTES"))}</label><input class="dialog-input link-value" id="pc-code" readonly value="${h(state.code)}"><p class="dialog-description">${state.pairedDevices || 0} ${h(tr("paired phones. The code pairs one new phone. Your PC must stay open while copying."))}</p><div class="dialog-buttons"><button class="secondary-btn" data-action="link-start" ${busy ? 'disabled' : ''}>${h(tr("New pairing code"))}</button><button class="secondary-btn" data-action="link-stop" ${busy ? 'disabled' : ''}>${h(tr("Turn connection off"))}</button></div>` : `<button class="primary-btn" data-action="link-start" ${busy ? 'disabled' : ''}>${busy ? tr("Starting…") : tr("Enable phone connection")}</button>`}${state.running && state.firewall ? `<p class="dialog-description">${h(tr("Your Linux firewall is enabled. Allow Undertone on the local Wi-Fi network if the phone cannot connect. Linux will show a system password prompt."))}</p><button class="secondary-btn" data-action="link-firewall">${h(tr("Allow phone through firewall"))}</button>` : ''}${state.running && platform === 'windows' ? `<p class="dialog-description">${h(tr("If the phone cannot connect, allow Undertone’s Python runtime on private networks in Windows Firewall."))}</p>` : ''}${state.pairedDevices ? `<button class="text-button" data-action="link-revoke">${h(tr("Forget paired phones"))}</button>` : ''}${message}<p class="dialog-description">${h(tr("Copies playlists, Liked Songs, imported audio, and completed downloads over your local network. Songs saved only in playlists stream normally until you download them. Stop the connection when you’re finished."))}</p>`, 'link');
+      openDialog(`${dialogTop(tr("Connect your phone"))}<p class="dialog-description">${h(tr("Open Settings → Devices on your phone and select this PC. Confirm on both devices."))}</p>
+        ${state.running ? `${busy ? '' : phonePicker()}<div id="pc-pairing-requests"></div>
+          <label class="dialog-field" for="pc-address">${h(tr("PC ADDRESS"))}</label><input class="dialog-input link-value" id="pc-address" readonly value="${h(state.addresses?.[0] || tr("No local Wi-Fi address found"))}">
+          ${state.addresses?.length > 1 ? `<p class="dialog-description">${h(tr("Other address:"))} ${h(state.addresses.slice(1).join(', '))}</p>` : ''}
+          <div class="dialog-buttons"><button class="secondary-btn" data-action="link-stop" ${busy ? 'disabled' : ''}>${h(tr("Turn connection off"))}</button></div>`
+        : `<button class="primary-btn" data-action="link-start" ${busy ? 'disabled' : ''}>${busy ? tr("Starting…") : tr("Enable phone connection")}</button>`}
+        ${state.running && state.firewall ? `<button class="secondary-btn" data-action="link-firewall">${h(tr("Allow phone through firewall"))}</button>` : ''}
+        ${state.running && platform === 'windows' ? `<p class="dialog-description">${h(tr("If the phone cannot connect, allow Undertone’s Python runtime on private networks in Windows Firewall."))}</p>` : ''}
+        ${state.pairedDevices ? `<button class="text-button" data-action="link-revoke">${h(tr("Forget paired phones"))}</button>` : ''}
+        ${message}`, 'link');
+      renderPairingRequests();
       const picker = dialog.querySelector('#phone-picker');
       if (picker && !busy) {
         picker.querySelector('select').addEventListener('change', event => {
@@ -192,7 +195,7 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
     } else {
       const pairingForm = !state.paired || choosing;
       const progress = busy && state.total ? `<progress class="link-progress" max="${state.total}" value="${state.done || 0}"></progress><p class="dialog-description">${h(tr('{done} / {total} audio files checked', { done: state.done || 0, total: state.total }))}</p>` : '';
-      openDialog(`${dialogTop(tr("Connect to your PC"))}<p class="dialog-description">${h(tr("On your PC, open Library → Connect phone and enable the connection. Keep both devices on the same Wi-Fi."))}</p>${phonePresence()}${pairingForm ? chooser() : pairedControls()}${message}${pairingForm ? '' : progress}`, 'link');
+      openDialog(`${dialogTop(tr("Connect to your PC"))}<p class="dialog-description">${h(tr("On your PC, open Settings → Devices and enable the connection. Keep both devices on the same Wi-Fi."))}</p>${phonePresence()}${pairingForm ? chooser() : pairedControls()}${message}${pairingForm ? '' : progress}`, 'link');
       presence.sync();
       if (pairingForm) {
         const form = dialog.querySelector('#link-form');
@@ -207,6 +210,29 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
       }
     }
   }
+  function renderPairingRequests() {
+    const box = dialog.querySelector('#pc-pairing-requests');
+    if (!visible(box)) return;
+    const requests = state.pairingRequests || [];
+    const signature = JSON.stringify(requests);
+    if (box.dataset.requests === signature) return;
+    box.dataset.requests = signature;
+    box.innerHTML = requests.map(request => `<div class="pair-request">
+      <strong>${h(request.name)}</strong><small>${h(request.address)}</small>
+      <div class="dialog-buttons">
+        <button class="secondary-btn" data-action="link-confirm-pair" data-id="${h(request.id)}">${h(tr("Decline"))}</button>
+        <button class="primary-btn" data-action="link-confirm-pair" data-id="${h(request.id)}" data-approved="true">${h(tr("Confirm on this PC"))}</button>
+      </div></div>`).join('');
+  }
+
+  async function pollPairingRequests() {
+    if (busy || !visible(dialog.querySelector('#pc-pairing-requests'))) return;
+    try {
+      state = await native.invoke('link_status');
+      renderPairingRequests();
+    } catch {}
+  }
+
   async function run(operation, args = {}) {
     if (busy) return null;
     busy = true; note = ''; render();
@@ -236,9 +262,24 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
     if (!visible(loading)) return;
     state = nextState;
     render();
+    if (!android && !requestPolling) {
+      requestPolling = setInterval(pollPairingRequests, 1000);
+    }
   }
   const actions = {
     'device-link': show,
+    'link-confirm-pair': async button => {
+      const box = button.closest('#pc-pairing-requests');
+      const approved = button.dataset.approved === 'true';
+      button.disabled = true;
+      try {
+        await native.invoke('link_confirm_pair', { id: button.dataset.id, approved });
+        await pollPairingRequests();
+        if (visible(box)) dialog.querySelector('.link-feedback').textContent = tr(approved ? 'Pairing approved.' : 'Pairing declined.');
+      } catch (error) {
+        if (visible(box)) dialog.querySelector('.link-feedback').textContent = tr(String(error.message || error));
+      } finally { button.disabled = false; }
+    },
     'link-rescan-phones': button => discoverPhones(button.closest('#phone-picker')),
     'link-invite': button => invitePhone(button.closest('#phone-picker')),
     'link-accept-invite': acceptInvitation,
@@ -270,18 +311,18 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
   async function submit() {
     const form = dialog.querySelector('#link-form');
     if (!form || busy || !form.reportValidity()) return;
-    const { device, address, code } = form.elements;
+    const { device, address } = form.elements;
     const target = device.value === 'manual' ? address.value.trim() : device.value;
     const submitButton = form.querySelector('[type="submit"]');
     const acceptButton = dialog.querySelector('[data-action="link-accept-invite"]');
     form.querySelector('fieldset').disabled = true;
-    acceptButton.disabled = true;
-    submitButton.textContent = tr("Connecting…");
+    if (acceptButton) acceptButton.disabled = true;
+    submitButton.textContent = tr("Waiting for the PC to confirm…");
     const message = dialog.querySelector('.link-feedback');
-    message.textContent = '';
+    message.textContent = tr("Confirm this phone in Settings → Devices on your PC.");
     busy = true;
     try {
-      pairing = native.invoke('link_pair', { address: target, code: code.value.trim() });
+      pairing = native.invoke('link_pair', { address: target, name: platform === 'ios' ? 'iPhone' : 'Android phone' });
       const result = await pairing;
       state = result;
       choosing = false;
@@ -293,10 +334,10 @@ export function deviceLink({ native, android, platform, openDialog, dialogTop, d
       pairing = null;
       busy = false;
       form.querySelector('fieldset').disabled = false;
-      acceptButton.disabled = false;
-      submitButton.textContent = tr("Pair with PC");
+      if (acceptButton) acceptButton.disabled = false;
+      submitButton.textContent = tr("Confirm on this phone");
     }
     if (visible(form)) render();
   }
-  return { actions, submit };
+  return { actions, submit, open: show };
 }

@@ -1,0 +1,51 @@
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/0.1.0-beta]
+    paths:
+      - ios/**
+      - scripts/build_ios.py
+      - .github/workflows/ios.yml
+      - web/**
+      - music/**
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Build iOS packages
+        run: python3 scripts/build_ios.py
+      - name: Verify app launches in iOS Simulator
+        timeout-minutes: 7
+        run: |
+          device="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if "iPhone" in d["name"]))')"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" dist/ios/iphonesimulator/Undertone.app
+          xcrun simctl launch "$device" personal.undertone.player
+          for attempt in {1..15}; do
+            if xcrun simctl spawn "$device" log show --last 2m --predicate 'eventMessage CONTAINS "Undertone iOS UI ready"' | grep -q 'Undertone iOS UI ready'; then
+              xcrun simctl io "$device" screenshot dist/ios-launch.png
+              exit 0
+            fi
+            sleep 2
+          done
+          xcrun simctl spawn "$device" log show --last 3m --predicate 'process == "Undertone"'
+          exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: undertone-ios
+          path: |
+            dist/*-ios-unsigned.ipa
+            dist/*-ios-simulator-*.zip
+            dist/ios-launch.png

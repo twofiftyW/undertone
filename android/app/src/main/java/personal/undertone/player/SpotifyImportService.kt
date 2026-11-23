@@ -22,35 +22,42 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
-class SpotifyImportService : Service() {
+open class SpotifyImportService : Service() {
     companion object {
         const val OPEN_IMPORT = "personal.undertone.player.OPEN_SPOTIFY_IMPORT"
-        private const val CHANNEL = "spotify_import"
-        private const val NOTIFICATION = 37
-        private const val PAUSE = "spotify_job_pause"
-        private const val STATUS = "spotify_job_status"
         @Volatile var active = false
             private set
-        private val callbacks = ConcurrentHashMap<String, (String) -> Unit>()
+        @Volatile private var downloadActive = false
+        fun isActive(operation: String) = if (operation.startsWith("download_job_")) downloadActive else active
+        private data class Request(val args: String, val reply: (String) -> Unit)
+        private val callbacks = ConcurrentHashMap<String, Request>()
         private val commands = Executors.newSingleThreadExecutor()
         // A replacement service must wait for an older service's in-flight lookup.
-        private val matching = Executors.newSingleThreadExecutor()
+        private val importWorker = Executors.newSingleThreadExecutor()
+        private val downloadWorker = Executors.newSingleThreadExecutor()
 
         fun command(context: Context, operation: String, args: String, respond: (String) -> Unit) {
             val key = UUID.randomUUID().toString()
-            callbacks[key] = respond
+            callbacks[key] = Request(args, respond)
             try {
-                val intent = Intent(context, SpotifyImportService::class.java).setAction(operation)
-                    .putExtra("key", key).putExtra("args", args)
-                if (operation == PAUSE) context.startService(intent) else context.startForegroundService(intent)
+                val service = if (operation.startsWith("download_job_")) DownloadService::class.java else SpotifyImportService::class.java
+                val intent = Intent(context, service).setAction(operation).putExtra("key", key)
+                if (operation.endsWith("_pause")) context.startService(intent) else context.startForegroundService(intent)
             } catch (error: RuntimeException) {
-                callbacks.remove(key)?.invoke(failure(error))
+                callbacks.remove(key)?.reply?.invoke(failure(error))
             }
         }
 
         private fun failure(error: Exception): String =
             JSONObject().put("error", error.message ?: "Could not run the Spotify import.").toString()
     }
+
+    protected open val download = false
+    private val prefix get() = if (download) "download_job_" else "spotify_job_"
+    private val channel get() = if (download) "music_downloads" else "spotify_import"
+    private val notificationId get() = if (download) 38 else 37
+    private val startTitle get() = if (download) R.string.song_downloads else R.string.spotify_import
+    private val matching get() = if (download) downloadWorker else importWorker
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var notifications: NotificationManager
@@ -67,10 +74,10 @@ class SpotifyImportService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        active = true
+        if (download) downloadActive = true else active = true
         notifications = getSystemService(NotificationManager::class.java)
-        notifications.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.spotify_import), NotificationManager.IMPORTANCE_LOW))
-        wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Undertone:SpotifyImport")
+        notifications.createNotificationChannel(NotificationChannel(channel, getString(startTitle), NotificationManager.IMPORTANCE_LOW))
+        wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Undertone:$prefix")
             .apply { setReferenceCounted(false) }
     }
 
@@ -80,13 +87,14 @@ class SpotifyImportService : Service() {
         latestStart = startId
         val ticket = ++generation
         commandPending = true
-        val operation = intent?.action ?: STATUS
-        val args = JSONObject(intent?.getStringExtra("args") ?: "{}")
-        val respond = intent?.getStringExtra("key")?.let(callbacks::remove)
+        val operation = intent?.action ?: prefix + "status"
+        val request = intent?.getStringExtra("key")?.let(callbacks::remove)
+        val args = JSONObject(request?.args ?: intent?.getStringExtra("args") ?: "{}")
+        val respond = request?.reply
         if (!foreground) {
             if (args.has("language")) current.put("language", args.optString("language"))
             try {
-                startForeground(NOTIFICATION, notification(current))
+                startForeground(notificationId, notification(current))
                 foreground = true
             } catch (error: RuntimeException) {
                 respond?.invoke(failure(error))
@@ -101,7 +109,7 @@ class SpotifyImportService : Service() {
                 }
             } catch (error: Exception) {
                 respond?.invoke(failure(error))
-                runCatching { Engine.call(this, STATUS, JSONObject()) }.getOrNull()
+                runCatching { Engine.call(this, prefix + "status", JSONObject()) }.getOrNull()
             }
             main.post {
                 if (!closed && ticket == generation) {
@@ -147,9 +155,9 @@ class SpotifyImportService : Service() {
         inFlight = true
         matching.execute {
             val next = try {
-                Engine.call(this, "spotify_job_step", args)
+                Engine.call(this, prefix + "step", args)
             } catch (_: Exception) {
-                runCatching { Engine.call(this, PAUSE, args.put("reason", "error")) }.getOrNull()
+                runCatching { Engine.call(this, prefix + "pause", args.put("reason", "error")) }.getOrNull()
             }
             main.post {
                 inFlight = false
@@ -167,7 +175,7 @@ class SpotifyImportService : Service() {
 
     private fun updateNotification(state: JSONObject) {
         if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            notifications.notify(NOTIFICATION, notification(state))
+            notifications.notify(notificationId, notification(state))
         }
     }
 
@@ -181,19 +189,19 @@ class SpotifyImportService : Service() {
         val total = state.optInt("total")
         val running = status !in setOf("paused", "done", "idle")
         val title = when (status) {
-            "paused" -> R.string.spotify_paused
-            "done" -> R.string.spotify_finished
-            else -> R.string.spotify_import
+            "paused" -> if (download) R.string.downloads_paused else R.string.spotify_paused
+            "done" -> if (download) R.string.downloads_finished else R.string.spotify_finished
+            else -> startTitle
         }
         val text = when {
             state.optString("reason") == "offline" -> labels.getString(R.string.spotify_offline)
-            total > 0 -> labels.getString(R.string.spotify_progress, checked, total)
-            else -> labels.getString(R.string.spotify_starting)
+            total > 0 -> labels.getString(if (download) R.string.downloads_progress else R.string.spotify_progress, checked, total)
+            else -> labels.getString(if (download) R.string.song_downloads else R.string.spotify_starting)
         }
         val immutable = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        val open = PendingIntent.getActivity(this, NOTIFICATION,
-            Intent(this, MainActivity::class.java).setAction(OPEN_IMPORT), immutable)
-        val builder = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_stat_music)
+        val open = PendingIntent.getActivity(this, notificationId,
+            Intent(this, MainActivity::class.java).apply { if (!download) action = OPEN_IMPORT }, immutable)
+        val builder = Notification.Builder(this, channel).setSmallIcon(R.drawable.ic_stat_music)
             .setContentTitle(labels.getString(title)).setContentText(text).setContentIntent(open)
             .setCategory(Notification.CATEGORY_PROGRESS).setOnlyAlertOnce(true).setOngoing(running)
             .setAutoCancel(!running).setShowWhen(false)
@@ -201,10 +209,10 @@ class SpotifyImportService : Service() {
             builder.setProgress(total, checked, total == 0)
             if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             if (state.optString("jobId").isNotEmpty()) {
-                val pause = Intent(this, SpotifyImportService::class.java).setAction(PAUSE)
+                val pause = Intent(this, javaClass).setAction(prefix + "pause")
                     .putExtra("args", JSONObject().put("jobId", state.getString("jobId")).toString())
                 builder.addAction(Notification.Action.Builder(android.R.drawable.ic_media_pause,
-                    labels.getString(R.string.playback_pause), PendingIntent.getService(this, NOTIFICATION, pause, immutable)).build())
+                    labels.getString(R.string.playback_pause), PendingIntent.getService(this, notificationId, pause, immutable)).build())
             }
         }
         return builder.build()
@@ -214,7 +222,7 @@ class SpotifyImportService : Service() {
         closed = true
         val jobId = current.optString("jobId")
         if (jobId.isNotEmpty()) commands.execute {
-            runCatching { Engine.call(this, PAUSE, JSONObject().put("jobId", jobId).put("reason", "timeout")) }
+            runCatching { Engine.call(this, prefix + "pause", JSONObject().put("jobId", jobId).put("reason", "timeout")) }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -222,8 +230,12 @@ class SpotifyImportService : Service() {
 
     override fun onDestroy() {
         closed = true
-        active = false
+        if (download) downloadActive = false else active = false
         if (wakeLock.isHeld) wakeLock.release()
         super.onDestroy()
     }
+}
+
+class DownloadService : SpotifyImportService() {
+    override val download = true
 }

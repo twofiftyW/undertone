@@ -338,9 +338,9 @@ class LibraryServer(ThreadingHTTPServer):
         except (OSError, ValueError):
             self.devices = {'deviceId': secrets.token_hex(16), 'tokens': []}
         self.lock = threading.Lock()
-        self.pin = f'{secrets.randbelow(1000000):06d}'
-        self.expires = time.time() + 600
-        self.attempts = 0
+        self.pairing_path = self.root / 'link' / 'pairing-requests.json'
+        self.pairings = {}
+        self.publish_pairings()
         self.allowed_files = {}
         self.last_client = ''
         super().__init__((host, port), Handler)
@@ -377,7 +377,6 @@ class LibraryServer(ThreadingHTTPServer):
                             networks.append(str(ipaddress.ip_network(f"{address['local']}/{address['prefixlen']}", strict=False)))
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-        prefix = self.fingerprint[:16]
         try:
             firewall = 'ENABLED=yes' in Path('/etc/ufw/ufw.conf').read_text()
         except OSError:
@@ -385,8 +384,59 @@ class LibraryServer(ThreadingHTTPServer):
         return {'running': True, 'discoveryAvailable': self.discovery is not None,
                 'discoveryName': self.discovery.name if self.discovery else '',
                 'addresses': [f'{a}:{self.server_port}' for a in addresses], 'networks': networks,
-                'firewall': firewall, 'code': '-'.join([prefix[:4], prefix[4:8], prefix[8:12], prefix[12:], self.pin]),
-                'expires': int(self.expires * 1000), 'pairedDevices': len(self.devices['tokens'])}
+                'firewall': firewall, 'pairingRequests': [], 'pairedDevices': len(self.devices['tokens'])}
+
+
+    def decision_path(self, ident):
+        return self.pairing_path.with_name(f'pair-decision-{ident}')
+
+    def publish_pairings(self):
+        active = []
+        for ident, request in list(self.pairings.items()):
+            if request['expires'] <= time.time():
+                self.pairings.pop(ident)
+                self.decision_path(ident).unlink(missing_ok=True)
+            elif not request.get('reply') and not self.decision_path(ident).exists():
+                active.append({'id': ident, 'name': request['name'], 'address': request['address'],
+                               'expires': int(request['expires'] * 1000)})
+        atomic_json(self.pairing_path, active)
+
+    def pairing_request(self, address, name):
+        self.publish_pairings()
+        if len(self.pairings) >= 12 or any(r['address'] == address and not r.get('reply') for r in self.pairings.values()):
+            raise ValueError('A pairing request is already waiting. Try again shortly.')
+        ident = secrets.token_hex(16)
+        secret = secrets.token_urlsafe(32)
+        self.pairings[ident] = {'secret': secret, 'name': display_name(name, 'Phone'),
+                                'address': address, 'expires': time.time() + 90}
+        self.publish_pairings()
+        return {'id': ident, 'secret': secret}
+
+    def pairing_result(self, address, request):
+        ident = str(request.get('id') or '')
+        self.publish_pairings()
+        entry = self.pairings.get(ident)
+        if not entry or entry['address'] != address or not hmac.compare_digest(entry['secret'], str(request.get('secret') or '')):
+            raise ValueError('The pairing request expired. Try connecting again.')
+        if 'reply' in entry:
+            return entry['reply']
+        path = self.decision_path(ident)
+        try:
+            answer = path.read_text(encoding='ascii')
+        except FileNotFoundError:
+            return {'pending': True}
+        if answer == 'decline':
+            raise ValueError('The PC declined the pairing request.')
+        if answer != 'confirm':
+            raise ValueError('The PC has not approved this pairing.')
+        token = secrets.token_urlsafe(32)
+        saved = {'hash': hashlib.sha256(token.encode()).hexdigest(), 'name': entry['name']}
+        devices = {**self.devices, 'tokens': [*self.devices['tokens'], saved][-8:]}
+        atomic_json(self.state_path, devices)
+        self.devices = devices
+        entry['reply'] = {'token': token, 'fingerprint': self.fingerprint, 'deviceId': devices['deviceId']}
+        self.publish_pairings()
+        return entry['reply']
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -422,28 +472,23 @@ class Handler(BaseHTTPRequestHandler):
         return lan_address(self.client_address[0]) and any(hmac.compare_digest(hashed, item['hash']) for item in self.server.devices['tokens'])
 
     def do_POST(self):
-        if self.path != '/pair' or not lan_address(self.client_address[0]):
+        if self.path not in ('/pair/request', '/pair/result') or not lan_address(self.client_address[0]):
             self.reply(404, {'error': 'Not found'})
             return
         try:
             length = int(self.headers.get('Content-Length') or '0')
             if not 0 < length <= 1024:
-                raise ValueError()
+                raise ValueError('Invalid pairing request.')
             request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict):
+                raise ValueError('Invalid pairing request.')
+            address = self.client_address[0]
             with self.server.lock:
-                self.server.attempts += 1
-                if self.server.attempts > 20 or time.time() > self.server.expires or not hmac.compare_digest(str(request.get('code') or ''), self.server.pin):
-                    self.reply(403, {'error': 'Pairing code expired or incorrect. Reopen Connect phone on the PC.'})
-                    return
-                token = secrets.token_urlsafe(32)
-                self.server.devices['tokens'].append({'hash': hashlib.sha256(token.encode()).hexdigest(), 'name': str(request.get('name') or 'Android phone')[:80]})
-                self.server.devices['tokens'] = self.server.devices['tokens'][-8:]
-                atomic_json(self.server.state_path, self.server.devices)
-                # This code pairs one phone. Previously paired phones keep working.
-                self.server.expires = 0
-                self.reply(200, {'token': token, 'fingerprint': self.server.fingerprint, 'deviceId': self.server.devices['deviceId']})
-        except (ValueError, OSError):
-            self.reply(400, {'error': 'Invalid pairing request'})
+                result = (self.server.pairing_request(address, str(request.get('name') or 'Phone'))
+                          if self.path == '/pair/request' else self.server.pairing_result(address, request))
+            self.reply(200, result)
+        except (ValueError, OSError) as error:
+            self.reply(400, {'error': str(error) if isinstance(error, ValueError) else 'The pairing request failed.'})
 
     def do_GET(self):
         if not self.authorized():
@@ -478,11 +523,11 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(409, {'error': str(error)})
 
 
-def connection(address, pin, token='', path='/library', body=None):
-    """Check the certificate BEFORE sending the pairing PIN or saved token."""
+def connection(address, pin=None, token='', path='/library', body=None):
+    """Pin the PC certificate before polling for approval or sending a saved token."""
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})', str(address).strip())
-    if not match or not lan_address(match[1]) or not 1 <= int(match[2]) <= 65535 or not re.fullmatch(r'[a-f0-9]{16}|[a-f0-9]{64}', pin):
-        raise ValueError('Enter the local PC address and pairing code shown in Undertone.')
+    if not match or not lan_address(match[1]) or not 1 <= int(match[2]) <= 65535 or (pin is None and (token or path != '/pair/request')) or (pin is not None and not re.fullmatch(r'[a-f0-9]{64}', pin)):
+        raise ValueError('Enter the local PC address shown in Undertone.')
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE  # Identity is pinned below, before HTTP.
@@ -491,8 +536,8 @@ def connection(address, pin, token='', path='/library', body=None):
     try:
         client.connect()
         fingerprint = hashlib.sha256(client.sock.getpeercert(binary_form=True)).hexdigest()
-        if not hmac.compare_digest(fingerprint[:len(pin)], pin):
-            raise ValueError('The pairing code belongs to a different PC. Check it again.')
+        if pin is not None and not hmac.compare_digest(fingerprint, pin):
+            raise ValueError('The PC identity changed. Select the PC again.')
         payload = json.dumps(body).encode() if body is not None else None
         headers = {'Content-Type': 'application/json'}
         if token:
@@ -508,20 +553,28 @@ def connection(address, pin, token='', path='/library', body=None):
         raise
 
 
-def pair(root, address, code):
-    clean = re.sub(r'[\s-]', '', str(code)).lower()
-    if not re.fullmatch(r'[a-f0-9]{16}\d{6}', clean):
-        raise ValueError('Enter the complete pairing code shown on your PC.')
-    client, response, fingerprint = connection(address, clean[:16], path='/pair', body={'code': clean[16:], 'name': 'Android phone'})
+def pair(root, address, name='Phone'):
+    client, response, fingerprint = connection(address, path='/pair/request', body={'name': name})
     try:
-        data = json.loads(response.read(4096))
-        if data.get('fingerprint') != fingerprint:
+        pending = json.loads(response.read(4096))
+    finally:
+        client.close()
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        client, response, _ = connection(address, fingerprint, path='/pair/result', body=pending)
+        try:
+            data = json.loads(response.read(4096))
+        finally:
+            client.close()
+        if data.get('pending'):
+            time.sleep(1)
+            continue
+        if data.get('fingerprint') != fingerprint or not data.get('token'):
             raise ValueError('The PC identity changed during pairing.')
         data['address'] = str(address).strip()
         atomic_json(Path(root) / 'pc-link.json', data)
         return {'paired': True, 'address': data['address']}
-    finally:
-        client.close()
+    raise ValueError('The PC did not confirm in time. Try again.')
 
 
 def pull(root, include_audio=True, progress=None):

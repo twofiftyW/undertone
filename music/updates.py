@@ -8,13 +8,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 from urllib.parse import urlparse
 import zipfile
 
 RELEASES = "https://api.github.com/repos/twofiftyW/undertone/releases"
-SUFFIXES = {"linux": "linux-x86_64.tar.gz", "windows": "windows-x64.zip", "android": "android.apk"}
+SUFFIXES = {"linux": "linux-x86_64.tar.gz", "windows": "windows-x64.zip", "android": "android.apk", "ios": "ios-unsigned.ipa"}
 ASSET_HOSTS = {"release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"}
 MAX_DOWNLOAD = 256 * 1024 * 1024
 MAX_EXPANSION = 768 * 1024 * 1024
@@ -49,36 +48,13 @@ def select_release(releases, current, platform):
     return max(offers, key=lambda offer: offer[0])[1] if offers else None
 
 
-def save_token(path, token):
-    if token and not re.fullmatch(r"(?:github_pat_|ghp_)[A-Za-z0-9_]{10,255}", token):
-        raise ValueError("Enter a valid GitHub access token.")
-    if not token:
-        path.unlink(missing_ok=True)
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="ascii", dir=path.parent, delete=False) as file:
-        temporary = Path(file.name)
-        try:
-            file.write(token)
-            file.flush()
-            file.close()
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
-def github(session, path, token, accept, *, stream=False):
+def github(session, path, accept, *, stream=False):
     headers = {"Accept": accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "Undertone-Updater"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
     return session.get(RELEASES + path, headers=headers, timeout=(10, 30), allow_redirects=False, stream=stream)
 
 
-def latest_release(session, token, current, platform):
-    with github(session, "?per_page=100", token, "application/vnd.github+json") as response:
-        if response.status_code in (401, 404):
-            raise ValueError("Check the GitHub access token in Update settings." if token
-                             else "Connect GitHub in Update settings to check for releases.")
+def latest_release(session, current, platform):
+    with github(session, "?per_page=100", "application/vnd.github+json") as response:
         response.raise_for_status()
         return select_release(response.json(), current, platform)
 
@@ -98,8 +74,8 @@ def write_verified(response, offer, destination):
         raise ValueError("The update download failed its integrity check. Try again.")
 
 
-def download_release(session, token, offer, destination):
-    with github(session, f"/assets/{offer['id']}", token, "application/octet-stream", stream=True) as response:
+def download_release(session, offer, destination):
+    with github(session, f"/assets/{offer['id']}", "application/octet-stream", stream=True) as response:
         if response.status_code == 200:
             write_verified(response, offer, destination)
             return
@@ -110,7 +86,7 @@ def download_release(session, token, offer, destination):
         address = urlparse(url)
         if address.scheme != "https" or address.netloc not in ASSET_HOSTS:
             raise ValueError("GitHub did not provide the update file.")
-    # Use a fresh request to the signed URL. The GitHub token stays on api.github.com.
+    # GitHub serves the public asset from a short-lived signed CDN URL.
     with session.get(url, timeout=(20, 45), allow_redirects=False, stream=True) as response:
         if response.status_code != 200:
             response.raise_for_status()
@@ -167,14 +143,9 @@ def unpack_desktop(archive, destination, platform):
         raise ValueError("The update package is incomplete.")
 
 
-def request(operation, current, platform, token_path, value="", destination=""):
-    path = Path(token_path)
-    token = path.read_text(encoding="ascii").strip() if path.is_file() else ""
-    if operation == "token":
-        save_token(path, value.strip())
-        token = value.strip()
-    if operation in ("token", "status"):
-        return {"version": current, "configured": bool(token)}
+def request(operation, current, platform, value="", destination=""):
+    if operation == "status":
+        return {"version": current}
 
     # Import the already bundled HTTPS client only for network requests.
     vendor = Path(__file__).resolve().parent / "vendor"
@@ -184,19 +155,19 @@ def request(operation, current, platform, token_path, value="", destination=""):
 
     try:
         with requests.Session() as session:
-            # Credentials come from the app's private settings, independent of .netrc.
+            # The releases are public. Ignore any .netrc credentials on the device.
             session.auth = lambda request: request
-            offer = latest_release(session, token, current, platform)
+            offer = latest_release(session, current, platform)
             if operation == "check":
                 return {"update": offer and {"version": offer["version"]}}
             if operation != "install" or not offer or offer["version"] != value:
                 raise ValueError("The available release changed. Check for updates again.")
             target = Path(destination)
             if platform == "android":
-                download_release(session, token, offer, target)
+                download_release(session, offer, target)
             else:
                 archive = target / "release.archive"
-                download_release(session, token, offer, archive)
+                download_release(session, offer, archive)
                 unpack_desktop(archive, target / "new", platform)
                 archive.unlink()
                 shutil.copy2(__file__, target / "apply.py")
@@ -209,9 +180,9 @@ def request(operation, current, platform, token_path, value="", destination=""):
         raise ValueError("Could not reach GitHub. Check your connection and try again.") from error
 
 
-def rpc(operation, current, platform, token_path, value="", destination=""):
+def rpc(operation, current, platform, value="", destination=""):
     try:
-        return json.dumps({"data": request(operation, current, platform, token_path, value, destination)})
+        return json.dumps({"data": request(operation, current, platform, value, destination)})
     except ValueError as error:
         return json.dumps({"error": str(error)})
     except (OSError, tarfile.TarError, zipfile.BadZipFile):

@@ -1,15 +1,3 @@
-.appearance-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 0;
-  color: var(--muted);
-  border-radius: 6px;
-  font-size: 12px;
-}
-.appearance-button .icon { width: 18px; height: 18px; }
-.appearance-button:hover, .appearance-button:focus-visible { color: var(--accent); }
-
 dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
 .appearance-heading { margin: 0 0 9px; font-size: 13px; font-weight: 650; color: var(--text); }
 .icon-heading { margin-top: 22px; }
@@ -119,10 +107,19 @@ dialog[data-kind="appearance"] { width: min(434px, calc(100vw - 28px)); }
 .app-icon-error:empty { display: none; }
 
 @media (max-width: 1050px) {
-  .appearance-button { width: 30px; height: 32px; justify-content: center; padding: 0; }
-  .appearance-button span { display: none; }
 }
 @media (max-width: 400px) {
   .topbar-actions { gap: 8px; }
   .theme-choices { gap: 9px; }
 }
+
+.settings-button { width:38px; height:38px; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+.settings-tabs { display:flex; flex-wrap:wrap; gap:5px; margin:0 0 18px; padding-bottom:9px; border-bottom:1px solid var(--line); }
+.settings-tabs button { padding:8px 9px; color:var(--secondary); border-radius:7px; font-size:12px; font-weight:600; }
+.settings-tabs button:hover { background:var(--panel); }
+.settings-tabs button[aria-current="page"] { background:var(--accent-tint); color:var(--accent); }
+#recording-search { display:flex; gap:8px; margin:12px 0; }
+#recording-search input { min-width:0; flex:1; }
+.pair-request { display:grid; gap:5px; margin:12px 0; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+.pair-request small { color:var(--muted); }
+.pair-request .dialog-buttons { margin-top:4px; flex-wrap:wrap; }

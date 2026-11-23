@@ -12,17 +12,17 @@ static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tauri::command]
 pub async fn app_update(app: AppHandle, operation: String, value: Option<String>) -> Result<Value, String> {
-    if !["status", "token", "check", "install"].contains(&operation.as_str()) {
+    if !["status", "check", "install"].contains(&operation.as_str()) {
         return Err("Unknown update request.".into());
     }
     let storage = app.path().app_local_data_dir().map_err(|_| "Update settings are unavailable.")?;
+    if operation == "status" { let _ = fs::remove_file(storage.join("github-update-token")); }
     let status = storage.join("update-result");
     let script = crate::music::backend_path(&app)?.with_file_name("updates.py");
     let options = json!({
         "operation": operation,
         "current": app.package_info().version.to_string(),
         "platform": std::env::consts::OS,
-        "token_path": storage.join("github-update-token"),
         "value": value.unwrap_or_default(),
     });
     if operation != "install" {

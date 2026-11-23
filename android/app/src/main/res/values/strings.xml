@@ -10,4 +10,8 @@
     <string name="spotify_finished">Spotify import finished</string>
     <string name="spotify_paused">Spotify import paused</string>
     <string name="spotify_offline">Catalog unavailable. Open Undertone to resume.</string>
+    <string name="song_downloads">Downloading songs</string>
+    <string name="downloads_paused">Downloads paused</string>
+    <string name="downloads_finished">Downloads finished</string>
+    <string name="downloads_progress">%1$d / %2$d downloads processed</string>
 </resources>

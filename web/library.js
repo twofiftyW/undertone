@@ -11,6 +11,8 @@ export function savedTrackMetadata(track, previous) {
   if (previous?.spotifyImportIds || track.spotifyImportIds) {
     metadata.spotifyImportIds = [...new Set([...(previous?.spotifyImportIds || []), ...(track.spotifyImportIds || [])])];
   }
+  const importRecord = track.importRecord || previous?.importRecord;
+  if (importRecord) metadata.importRecord = importRecord;
   return { ...metadata, spotifyUris: [...new Set([...(previous?.spotifyUris || []), ...(track.spotifyUris || [])])] };
 }
 
@@ -19,11 +21,12 @@ export function canDownload(track) {
 }
 
 // Check the device before resolving a network stream, including after a restart.
-export async function resolveCatalogAudio(track, native, request, force = false) {
+export async function resolveCatalogAudio(track, native, request, force = false, offlineOnly = false) {
   if (native && canDownload(track)) {
     const file = await native.invoke('offline_file', { id: track.remoteId, source: track.source });
     if (file) return { ...file, url: file.nativePath, offline: true };
   }
+  if (offlineOnly) return null;
   return request('resolve', { id: track.remoteId, source: track.source, track, force });
 }
 
@@ -117,18 +120,28 @@ export function appendSpotifyToPlaylist(playlist, additions) {
   }
 }
 
-export function replaceLibraryTracks(library, candidates) {
+export function replaceLibraryTracks(library, candidates, { correction = false } = {}) {
   const replacements = new Map();
   for (const [oldId, candidate] of candidates) {
     const original = library.tracks[oldId];
-    // A user can choose a recording manually while an automatic lookup is in flight.
-    if (!original?.importRecord || original.source !== 'unmatched') continue;
+    // Late automatic results cannot replace a recording the user already corrected.
+    if (!original || (correction ? !['monochrome', 'youtube', 'audius'].includes(original.source)
+                                 : original.source !== 'unmatched' || !original.importRecord)) continue;
     const existing = library.tracks[candidate.id];
-    const spotifyUris = [...new Set([...(existing?.spotifyUris || []), ...(candidate.spotifyUris || []), original.importRecord.uri].filter(Boolean))];
-    const track = savedTrackMetadata({ ...candidate, spotifyUris }, existing);
-    if (!original.importRecord.uri) track.spotifyImportIds = [...new Set([...(track.spotifyImportIds || []), oldId])];
+    const spotifyUris = [...new Set([...(existing?.spotifyUris || []), ...(original.spotifyUris || []),
+      ...(candidate.spotifyUris || []), original.importRecord?.uri].filter(Boolean))];
+    const inheritedIds = original.spotifyImportIds || [];
+    const spotifyImportIds = [...inheritedIds, ...(candidate.spotifyImportIds || [])];
+    if (original.source === 'unmatched' && !original.importRecord.uri) spotifyImportIds.push(oldId);
+    const track = savedTrackMetadata({ ...candidate, spotifyUris, spotifyImportIds,
+      importRecord: original.importRecord || candidate.importRecord }, existing);
     library.tracks[candidate.id] = track;
-    if (oldId !== candidate.id) delete library.tracks[oldId];
+    if (oldId !== candidate.id) {
+      if (library.downloads?.[oldId]) {
+        const { importRecord, spotifyImportIds, spotifyUris, ...downloaded } = original;
+        library.tracks[oldId] = downloaded;
+      } else delete library.tracks[oldId];
+    }
     replacements.set(oldId, candidate.id);
   }
   if (replacements.size) {

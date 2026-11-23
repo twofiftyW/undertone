@@ -35,7 +35,7 @@ def offline_files():
 def dispatch(operation, args):
     import backend
     import device_sync
-    if operation.startswith('spotify_job_'):
+    if operation.startswith(('spotify_job_', 'download_job_')):
         import spotify_job
         return spotify_job.dispatch(ROOT, operation, args)
     if operation == 'music':
@@ -56,6 +56,8 @@ def dispatch(operation, args):
         return True
     if operation == 'resolve_track':
         track = args['track']
+        if args.get('offlineOnly') and track.get('source') == 'audius':
+            return {'url': None}
         if track.get('source') == 'audius' and re.fullmatch(r'[A-Za-z0-9]{1,100}', str(track.get('remoteId') or '')):
             return {'url': 'https://discoveryprovider.audius.co/v1/tracks/' + track['remoteId'] + '/stream?app_name=UndertonePersonal'}
         if track.get('source') == 'local':
@@ -69,6 +71,8 @@ def dispatch(operation, args):
         saved = dispatch('offline_file', {'id': track.get('remoteId'), 'source': track.get('source')})
         if saved:
             return {'url': saved['nativePath'], 'offline': True}
+        if args.get('offlineOnly'):
+            return {'url': None}
         return backend.dispatch('resolve', {'id': track.get('remoteId'), 'source': track.get('source'), 'track': track})
     if operation == 'parse_spotify':
         token = args.get('token', '')
@@ -95,7 +99,7 @@ def dispatch(operation, args):
             pass
         return data
     if operation == 'link_pair':
-        return device_sync.pair(ROOT, str(args.get('address') or ''), str(args.get('code') or ''))
+        return device_sync.pair(ROOT, str(args.get('address') or ''), str(args.get('name') or 'Phone'))
     if operation == 'link_forget':
         (ROOT / 'pc-link.json').unlink(missing_ok=True)
         (ROOT / 'link-progress.json').unlink(missing_ok=True)

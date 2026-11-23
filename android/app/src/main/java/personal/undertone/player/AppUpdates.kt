@@ -24,7 +24,7 @@ internal class AppUpdates(private val activity: MainActivity) {
         }
         val operation = options.optString("operation")
         val value = options.optString("value")
-        if (operation in setOf("status", "token", "check")) {
+        if (operation in setOf("status", "check")) {
             worker.execute {
                 if (operation == "status" && !installing.get()) File(activity.cacheDir, "undertone-update.apk").delete()
                 callback(runCatching { Engine.update(activity, operation, value) }.getOrElse {

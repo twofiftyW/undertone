@@ -75,7 +75,7 @@ impl Connection {
         };
         if let Some(message) = reply["error"].as_str() { return Err(message.to_owned()); }
         let result = reply.get_mut("data").ok_or("The import service returned an invalid response.")?.take();
-        if result["state"].is_string() {
+        if operation.starts_with("spotify_job_") && result["state"].is_string() {
             self.active = result["serviceActive"] == true;
             update_progress(app, &result);
         }
@@ -143,8 +143,8 @@ async fn monitor_minimized(app: AppHandle) {
 
 #[tauri::command]
 pub async fn spotify_job(app: AppHandle, operation: String, args: Value) -> Result<Value, String> {
-    if !matches!(operation.as_str(), "spotify_job_start" | "spotify_job_resume" | "spotify_job_pause"
-        | "spotify_job_status" | "spotify_job_results" | "spotify_job_ack")
+    let action = operation.strip_prefix("spotify_job_").or_else(|| operation.strip_prefix("download_job_"));
+    if !matches!(action, Some("start" | "resume" | "pause" | "status" | "results" | "ack"))
     {
         return Err("Unknown Spotify import request.".into());
     }

@@ -20,7 +20,8 @@ import monochrome
 
 VIDEO = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 CACHE = Path(os.environ.get("UNDERTONE_CACHE_DIR", Path.home() / ".cache/undertone/catalog"))
-MATCH_WORKERS = concurrent.futures.ThreadPoolExecutor(max_workers=2, initializer=monochrome.initialize_match_worker)
+MATCH_BATCH = 8
+MATCH_WORKERS = concurrent.futures.ThreadPoolExecutor(max_workers=4, initializer=monochrome.initialize_match_worker)
 
 
 def cached(kind, args, fetch, ttl=3600, force=False):
@@ -249,8 +250,8 @@ def dispatch(operation, args):
         return spotify_import.from_url(str(args.get("url") or ""))
     if operation == "match":
         seeds = args.get("tracks") or []
-        if not isinstance(seeds, list) or len(seeds) > 4:
-            raise ValueError("Match up to four recordings at a time")
+        if not isinstance(seeds, list) or len(seeds) > MATCH_BATCH:
+            raise ValueError("Match up to eight recordings at a time")
         def find(seed):
             if not isinstance(seed, dict):
                 return {"track": None, "candidates": [], "reason": "Invalid recording metadata"}
@@ -262,9 +263,13 @@ def dispatch(operation, args):
         by_seed = dict(zip(unique, MATCH_WORKERS.map(find, unique.values())))
         matches = [by_seed[json.dumps(seed, sort_keys=True)] for seed in seeds]
         if args.get('includeCandidates') is False:
-            # The background importer only needs the selected track or the reason
-            # for a miss. Keep full candidates cached for manual selection.
-            matches = [{key: value for key, value in result.items() if key != 'candidates'} for result in matches]
+            # Choose the same first alternative available in the correction picker.
+            automatic = []
+            for result in matches:
+                track = result.get('track') or next(iter(result.get('candidates') or []), None)
+                automatic.append({'track': track, 'reason': '' if track else result.get('reason', ''),
+                                  'error': bool(not track and result.get('error'))})
+            matches = automatic
         return {"matches": matches}
     if operation == "search":
         if not query:

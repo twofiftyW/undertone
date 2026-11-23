@@ -192,24 +192,26 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
     }
 
     @JavascriptInterface fun request(id: String, operation: String, args: String) {
-        if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 1024 * 1024) return
+        if (!Regex("[a-z0-9-]{1,60}").matches(id) || args.length > 2 * 1024 * 1024) return
         if (operation == "app_update") {
             (context as? MainActivity)?.updates?.request(args) { response -> callback(id, response) }
             return
         }
-        if (operation in setOf("spotify_job_start", "spotify_job_resume") || (operation == "spotify_job_pause" && SpotifyImportService.active)) {
+        val job = operation.startsWith("spotify_job_") || operation.startsWith("download_job_")
+        val action = operation.substringAfter("_job_")
+        if (job && (action in setOf("start", "resume") || action == "pause" && SpotifyImportService.isActive(operation))) {
             SpotifyImportService.command(context, operation, args) { response -> callback(id, response) }
-            if (operation != "spotify_job_pause") (context as? MainActivity)?.requestImportNotifications()
+            if (action != "pause") (context as? MainActivity)?.requestImportNotifications()
             return
         }
-        if (operation in setOf("spotify_job_status", "spotify_job_results", "spotify_job_ack", "spotify_job_pause")) {
+        if (job && action in setOf("status", "results", "ack", "pause")) {
             workers.execute {
                 val response = try {
                     val data = Engine.call(context, operation, JSONObject(args))
-                    if (operation == "spotify_job_status") data.put("serviceActive", SpotifyImportService.active)
+                    if (action == "status") data.put("serviceActive", SpotifyImportService.isActive(operation))
                     JSONObject().put("data", data).toString()
                 } catch (error: Exception) {
-                    JSONObject().put("error", error.message ?: "Could not read the Spotify import.").toString()
+                    JSONObject().put("error", error.message ?: "Could not read background progress.").toString()
                 }
                 callback(id, response)
             }
@@ -221,7 +223,11 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
         }
         if (operation !in setOf("music", "list_downloads", "offline_file", "download_track", "remove_download", "parse_spotify", "link_status", "link_discover", "link_pair", "link_forget", "link_pull")) return
         workers.execute {
-            val response = try { Engine.reply(context, operation, if (operation == "link_discover") discoveryArgs() else args) } catch (_: Exception) { JSONObject().put("error", "The music engine could not start. Restart Undertone and try again.").toString() }
+            val response = try { Engine.reply(context, operation, when (operation) {
+                "link_discover" -> discoveryArgs()
+                "link_pair" -> JSONObject(args).put("name", Build.MODEL).toString()
+                else -> args
+            }) } catch (_: Exception) { JSONObject().put("error", "The music engine could not start. Restart Undertone and try again.").toString() }
             callback(id, response)
         }
     }

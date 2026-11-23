@@ -1,4 +1,5 @@
 const device = window.UndertoneDevice;
+const ios = window.UndertoneIOS === true;
 const pending = new Map();
 window.__undertoneReply = (id, reply) => {
   const task = pending.get(id);
@@ -77,7 +78,29 @@ async function invoke(command, args, options) {
   throw new Error("Unknown native command");
 }
 
-export const nativeRuntime = window.__TAURI__?.core || (device ? { invoke, convertFileSrc: (path) => call("audioURL", path) } : null);
+async function invokeIOS(command, args = {}, options = {}) {
+  if (command === 'platform') return 'ios';
+  if (command === 'spotify_help') {
+    const link = document.createElement('a');
+    link.href = 'https://www.spotify.com/account/privacy/';
+    link.click();
+    return;
+  }
+  const binary = command === 'save_audio' || command === 'parse_spotify';
+  const response = await fetch('./bridge/' + command, {
+    method: 'POST',
+    headers: { 'Content-Type': binary ? 'application/octet-stream' : 'application/json', ...options.headers },
+    body: binary ? args : JSON.stringify(args),
+  });
+  const reply = await response.json();
+  if (!response.ok || reply.error) throw new Error(reply.error || 'The music engine is unavailable.');
+  return reply.data;
+}
+
+export const nativeRuntime = window.__TAURI__?.core || (device
+  ? { invoke, convertFileSrc: path => call('audioURL', path) }
+  : ios ? { invoke: invokeIOS, convertFileSrc: path => new URL('./audio/' + encodeURIComponent(path.split('/').pop()), location.href).href }
+  : null);
 
 async function readSpotifyPages(parsed, readPage) {
   for (const collection of parsed.collections) {
@@ -95,7 +118,7 @@ async function readSpotifyPages(parsed, readPage) {
 
 export async function parseSpotifyFile(file) {
   const filename = encodeURIComponent(file.name);
-  if (device) return nativeRuntime.invoke('parse_spotify', file, { headers: { 'x-import-name': filename } });
+  if (device || ios) return nativeRuntime.invoke('parse_spotify', file, { headers: { 'x-import-name': filename } });
   const token = await nativeRuntime.invoke('begin_spotify_file');
   try {
     for (let offset = 0; offset < file.size; offset += 262144) {
@@ -117,6 +140,7 @@ export function spotifyJobRequest(operation, args) {
 export async function musicRequest(operation, args = {}) {
   if (window.__TAURI__?.core) return window.__TAURI__.core.invoke("music", { operation, args });
   if (device) return request('music', { operation, args });
+  if (ios) return invokeIOS('music', { operation, args });
   const response = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, args }) });
   const reply = await response.json();
   if (!response.ok || reply.error) throw new Error(reply.error || "The music engine is unavailable");
