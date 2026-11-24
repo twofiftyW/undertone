@@ -96,6 +96,8 @@ Use **+** or **Add to queue** to put a song first under **Up next**. On Android,
 
 The player starts buffering the next stream with about twenty seconds left. **Next** reuses an ongoing load. It also prepares the next available local file during offline playback. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
 
+Open **Lyrics** in the player to look up the current recording on LRCLIB. Timed lyrics highlight the current line as you play or seek. Recordings with plain lyrics show the full text. Lyrics you open are saved on that device for offline playback. If the track changes while lyrics are open, saved lyrics appear automatically. Choose **Load lyrics** to look up a track for the first time.
+
 ## Build Linux
 
 Install Node.js, Rust, Tauri’s Linux development prerequisites, Python 3, mpv, yt-dlp, Deno, and uv or pip. Then:

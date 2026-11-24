@@ -62,7 +62,7 @@ pub async fn python_request(app: &tauri::AppHandle, script: &std::path::Path, da
 
 #[tauri::command]
 pub async fn music(app: tauri::AppHandle, operation: String, args: Value) -> Result<Value, String> {
-    if !["search", "fallback", "videos", "artist", "album", "discography", "recommendations", "resolve", "home", "match", "spotify_url"].contains(&operation.as_str()) {
+    if !["search", "fallback", "videos", "artist", "album", "discography", "recommendations", "resolve", "home", "match", "spotify_url", "lyrics"].contains(&operation.as_str()) {
         return Err("Unknown music request".into());
     }
     engine(&app, &operation, args, Duration::from_secs(180)).await

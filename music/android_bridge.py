@@ -6,7 +6,7 @@ import re
 
 ROOT = None
 IMPORTS = None
-OPERATIONS = {'search', 'fallback', 'videos', 'artist', 'discography', 'album', 'recommendations', 'resolve', 'home', 'match', 'spotify_url'}
+OPERATIONS = {'search', 'fallback', 'videos', 'artist', 'discography', 'album', 'recommendations', 'resolve', 'home', 'match', 'spotify_url', 'lyrics'}
 
 
 def configure(files, cache):

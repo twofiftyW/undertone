@@ -1,4 +1,12 @@
 export const russian = {
+  "Lyrics": "Текст",
+  "Load lyrics": "Загрузить текст",
+  "Loading lyrics…": "Загружаем текст…",
+  "This track is instrumental.": "Это инструментальная композиция.",
+  "No lyrics found for this recording.": "Текст для этой записи не найден.",
+  "Couldn’t load lyrics. Check your connection and try again.": "Не удалось загрузить текст. Проверьте подключение и попробуйте снова.",
+  "Back to current line": "К текущей строке",
+  "Couldn’t save lyrics for offline use.": "Не удалось сохранить текст для просмотра без интернета.",
   "Phone search needs UDP port 47834. Try again when the port is free.": "Для поиска телефонов нужен UDP-порт 47834. Повторите поиск, когда порт освободится.",
   "Available phones": "Доступные телефоны",
   "Choose a phone": "Выберите телефон",

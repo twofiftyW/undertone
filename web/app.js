@@ -4,6 +4,8 @@ import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequ
 import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
+import { activeLyricIndex, createLyricsLoader } from './lyrics.js';
+import { createLyricsView } from './lyrics-view.js';
 import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyCollections, appendSpotifyToPlaylist, replaceLibraryTracks, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
@@ -26,6 +28,12 @@ const deviceStorage = desktop || mobileApp;
 const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
 const view = $("#view");
 const dialog = $("#dialog");
+const lyricsView = createLyricsView({ dialog, openDialog, closeDialog, dialogTop });
+const loadLyrics = createLyricsLoader(query => musicRequest('lyrics', query));
+let lyricsRequest = 0;
+let lyricsTrackId = null;
+let lyricLines = null;
+let playbackPosition = 0;
 let library = emptyLibrary();
 let db;
 let storageReady = false;
@@ -702,6 +710,11 @@ function updatePlayer() {
   $("#now-artist").disabled = !current?.artists?.some(a => a.id);
   $("#now-art").innerHTML = current ? art(current, false) : icon("disc");
   $("#now-like").disabled = !current;
+  $("#lyrics-toggle").disabled = !current;
+  if (lyricsView.isOpen() && current?.id !== lyricsTrackId) {
+    if (current) showTrackLyrics(true);
+    else lyricsView.close();
+  }
   $("#now-like").classList.toggle("liked", !!current && isLiked(current.id));
   $("#now-like").setAttribute("aria-label", current && isLiked(current.id) ? tr("Unlike current song") : tr("Like current song"));
   ["#play-pause", "#previous", "#next"].forEach((selector) => $(selector).disabled = !current);
@@ -711,7 +724,30 @@ function updatePlayer() {
   renderQueue();
 }
 
+async function showTrackLyrics(cacheOnly = false) {
+  if (!current) return;
+  const track = current;
+  const request = ++lyricsRequest;
+  lyricsTrackId = track.id;
+  lyricLines = null;
+  lyricsView.show(track);
+  let result;
+  try {
+    result = await loadLyrics(track, { cacheOnly });
+  } catch {
+    result = { kind: 'error' };
+  }
+  if (request !== lyricsRequest || !lyricsView.isOpen() || current?.id !== track.id) return;
+  lyricsView.render(result ?? { kind: 'idle' });
+  if (result?.kind === 'timed') {
+    lyricLines = result.lines;
+    lyricsView.highlight(activeLyricIndex(lyricLines, playbackPosition));
+  }
+}
+
 function updateProgress(position = audio.currentTime, duration = audio.duration) {
+  playbackPosition = Number.isFinite(position) ? position : 0;
+  if (lyricLines && lyricsView.isOpen()) lyricsView.highlight(activeLyricIndex(lyricLines, playbackPosition));
   const length = Number.isFinite(duration) && duration > 0 ? duration : current?.duration || 0;
   if (!seeking) {
     $("#seek").value = length ? Math.min(1000, position / length * 1000) : 0;
@@ -1882,6 +1918,8 @@ const actions = {
   repeat: () => { repeat = { off: "all", all: "one", one: "off" }[repeat]; updateModes(); if (nativeAudio) nativeAudio.command("repeat", repeat); else primeNextTrack(); },
   mute: () => { audio.muted = !audio.muted; updateVolume(); if (nativeAudio) nativeAudio.command("volume", String(audio.muted ? 0 : audio.volume)); },
   queue: () => { const open = $("#queue-panel").classList.toggle("hidden") === false; $("#queue-toggle").classList.toggle("on", open); $("#queue-toggle").setAttribute("aria-expanded", open); renderQueue(); },
+  lyrics: () => showTrackLyrics(),
+  'lyrics-retry': () => showTrackLyrics(),
   "queue-play": (button) => playAt(Number(button.dataset.index)),
   expand: () => { if (window.innerWidth <= 650) document.body.classList.toggle("player-expanded"); else actions.queue(); },
   like: (button) => likeTrack(button.dataset.id),
@@ -2078,6 +2116,7 @@ audio.addEventListener("error", () => { if (!current || !audio.src) return; clea
 
 document.addEventListener("keydown", (event) => {
   const editing = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;
+  if (event.key === 'Escape' && lyricsView.isOpen()) return;
   if (event.key === "Escape") { document.body.classList.remove("player-expanded"); $("#queue-panel").classList.add("hidden"); $("#queue-toggle").classList.remove("on"); $("#queue-toggle").setAttribute("aria-expanded", "false"); }
   if (editing || dialog.open || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "/") { event.preventDefault(); navigate("search"); }
