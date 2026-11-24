@@ -12,6 +12,11 @@ album = release({'releaseId': '304193265622626304', 'title': 'Echoes of Childhoo
 song = {'trackId': '304193265622626305', 'title': 'Game Over', 'duration': 127000, 'playable': True}
 normalized = track(song, [person], album)
 assert normalized['id'] == 'monochrome:304193265622626305'
+assert 'recordingId' not in normalized
+for recording_id in ('198091630517948416', 198091630517948416):
+    assert track({**song, 'recordingId': recording_id})['recordingId'] == '198091630517948416'
+for invalid in (None, '123', '１２３４５６７８９０１２３４５６７８', '../../track/198091630517948416'):
+    assert 'recordingId' not in track({**song, 'recordingId': invalid})
 assert normalized['duration'] == 127
 assert normalized['artists'] == [person]
 assert normalized['album']['id'] == album['id']

@@ -4,6 +4,9 @@ import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequ
 import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
+import { WindowsCatalogPlayer } from './windows-catalog-player.js';
+import { createLyricsLoader, createLyricsSession } from './lyrics.js';
+import { createLyricsView } from './lyrics-view.js';
 import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyCollections, appendSpotifyToPlaylist, replaceLibraryTracks, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
 import { deviceLink } from './link.js';
@@ -23,15 +26,21 @@ const linuxPlayback = platform === 'linux';
 const desktop = linuxPlayback || platform === 'windows';
 const mobileApp = platform === 'android' || platform === 'ios';
 const deviceStorage = desktop || mobileApp;
-const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
+const audioElement = $("#audio");
+const audio = linuxPlayback ? new LinuxPlayer(native) : platform === 'windows'
+  ? new WindowsCatalogPlayer(audioElement, () => current?.recordingId)
+  : nativeAudio ? audioElement : new BrowserPlayer(audioElement);
 const view = $("#view");
 const dialog = $("#dialog");
+const lyricsView = createLyricsView({ dialog, openDialog, closeDialog, seekPlayback });
+const lyricsSession = createLyricsSession(createLyricsLoader(query => musicRequest('lyrics', query)), lyricsView);
 let library = emptyLibrary();
 let db;
 let storageReady = false;
 let saveChain = Promise.resolve();
 let page = "discover";
 let searchCategory = "all";
+let searchSource = localStorage.getItem('undertone.searchSource') === 'audius' ? 'audius' : 'main';
 let query = "";
 const playlistSearchQueries = new Map();
 let remoteTracks = [];
@@ -299,13 +308,31 @@ function renderDiscover() {
   return content;
 }
 
+function audiusPolicyLinks() {
+  const documents = [
+    ['terms', 'ApiTerms.pdf', tr('Audius API terms')],
+    ['privacy', 'PrivacyPolicy.pdf', tr('Audius privacy policy')],
+  ];
+  return `<div class="audius-links">${documents.map(([key, file, label]) => desktop || platform === 'android'
+    ? `<button type="button" data-action="audius-policy" data-document="${key}">${h(label)}</button>`
+    : `<a href="https://audius.co/documents/${file}"${platform === 'ios' ? '' : ' target="_blank" rel="noopener noreferrer"'}>${h(label)}</a>`).join('')}</div>`;
+}
+
 function renderSearch() {
+  if (!query && searchSource === 'audius') return `<div class="search-intro"><h1>${h(tr('Search Audius'))}</h1><p>${h(tr('Search by track or artist.'))}</p></div>` + audiusPolicyLinks();
   if (!query) return `<div class="search-intro"><span class="eyebrow">${h(tr("LESS DIGGING. MORE LISTENING."))}</span><h1>${h(tr("Songs. Artists. Albums."))}</h1><p>${h(tr("Find a recording, explore an artist, or play an entire release."))}</p><div class="search-prompts">${recommendationArtists().map(({ name }) => `<button class="chip" data-action="search-name" data-name="${h(name)}">${icon("search")}${h(name)}</button>`).join("")}</div></div>${library.followedArtists.length ? `<section class="music-section"><div class="section-heading"><h2>${h(tr("Your artists"))}</h2></div><div class="artist-grid">${library.followedArtists.slice(0, 6).map(artistCard).join("")}</div></section>` : ""}`;
   const tabs = [["all", tr("All")], ["songs", tr("Songs")], ["artists", tr("Artists")], ["albums", tr("Albums")], ["videos", tr("Music videos")]];
-  const localMatches = getTracks(library.imports).filter(t => matches(t, query));
-  const music = searchTracks(searchData, searchCategory);
+  const music = searchSource === 'audius' ? searchData.tracks : searchTracks(searchData, searchCategory);
   const exactArtist = searchData.artists?.find(a => a.name.normalize("NFKC").toLocaleLowerCase() === query.normalize("NFKC").toLocaleLowerCase());
-  let output = `<div class="search-page-heading"><div><span class="eyebrow">${h(tr("FIND YOUR SOUND"))}</span><h1>${h(tr('Results for “{query}”', { query }))}</h1></div><span class="search-status">${videoLoading ? `<i class="loading-dot"></i>${h(tr("Checking YouTube for more matches…"))}` : remoteStatus === "ready" ? countLabel(music.length, 'recording') : tr("Searching…")}</span></div><div class="search-filters" aria-label="${h(tr("Search result types"))}">${tabs.map(([value, label]) => `<button class="chip ${searchCategory === value ? "active" : ""}" data-action="search-filter" data-filter="${value}" aria-pressed="${searchCategory === value}">${label}</button>`).join("")}</div>`;
+  let output = `<div class="search-page-heading"><div><span class="eyebrow">${h(tr("FIND YOUR SOUND"))}</span><h1>${h(tr('Results for “{query}”', { query }))}</h1></div><span class="search-status">${videoLoading ? `<i class="loading-dot"></i>${h(tr("Checking YouTube for more matches…"))}` : remoteStatus === "ready" ? countLabel(music.length, 'recording') : remoteStatus === 'loading' ? tr("Searching…") : ''}</span></div>`;
+  if (searchSource === 'audius') {
+    if (remoteStatus === 'loading') output += skeleton();
+    else if (remoteStatus === 'error') output += catalogFailure();
+    else output += music.length ? trackRows(music) : `<p class="catalog-empty">${h(tr('No tracks found on Audius.'))}</p>`;
+    return output + audiusPolicyLinks();
+  }
+  const localMatches = getTracks(library.imports).filter(t => matches(t, query));
+  output += `<div class="search-filters" aria-label="${h(tr("Search result types"))}">${tabs.map(([value, label]) => `<button class="chip ${searchCategory === value ? "active" : ""}" data-action="search-filter" data-filter="${value}" aria-pressed="${searchCategory === value}">${label}</button>`).join("")}</div>`;
   if (remoteStatus === "loading") return output + skeleton();
   if (remoteStatus === "error") return output + catalogFailure();
   if (searchData.notice) output += `<p class="catalog-notice">${h(tr(searchData.notice))}</p>`;
@@ -423,6 +450,7 @@ function collectionTracks() {
   if (page === "downloads") return sortedTracks(Object.keys(library.downloads).filter(id => library.downloads[id]?.nativePath));
   if (page.startsWith("playlist:")) return sortedTracks(playlist()?.trackIds || []);
   if (page === "search") {
+    if (searchSource === 'audius') return searchData.tracks;
     const results = searchTracks(searchData, searchCategory);
     return searchCategory === "videos" ? results : [...getTracks(library.imports).filter(t => matches(t, query)), ...results];
   }
@@ -518,6 +546,9 @@ function render() {
   const catalogPage = ["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page);
   view.setAttribute("aria-busy", catalogPage && remoteStatus === "loading" && (page !== "search" || !!query));
   document.body.classList.toggle("searching", page === "search");
+  for (const button of $('#search-sources').querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.source === searchSource));
+  }
   $("#clear-search").classList.toggle("hidden", !query);
   if ($("#navigate-back")) $("#navigate-back").disabled = !navigationHistory.length;
   renderSidebar();
@@ -545,7 +576,7 @@ async function loadMoreVideos(ticket = requestId, force = false) {
     searchData = { ...searchData, videos: rankTracks(result.tracks, q), fallbackLoaded: true };
     registerCatalog(searchData);
     remoteTracks = searchTracks(searchData, searchCategory);
-    catalogCache.set(q, searchData);
+    catalogCache.set('main:' + q, searchData);
   } catch (error) {
     if (ticket === requestId && page === "search") toast(tr("Extra video results couldn’t load. The music results are still available."));
   } finally {
@@ -564,23 +595,24 @@ async function loadCatalog(force = false) {
   render();
   try {
     if (target === "search") {
-      const previous = catalogCache.get(q);
+      const cacheKey = searchSource + ':' + q;
+      const previous = catalogCache.get(cacheKey);
       searchData = previous || { tracks: [], artists: [], albums: [] };
-      if (searchCategory === "videos") {
+      if (searchSource === 'main' && searchCategory === "videos") {
         remoteTracks = searchTracks(searchData, searchCategory);
         remoteStatus = "ready";
         if (force || !searchData.fallbackLoaded) await loadMoreVideos(ticket, force);
         else render();
         return;
       }
-      const result = !force && previous?.musicLoaded ? previous : await musicRequest("search", { query: q, force });
+      const result = !force && previous?.musicLoaded ? previous : await musicRequest(searchSource === 'audius' ? 'audius_search' : 'search', { query: q, force });
       if (ticket !== requestId) return;
       searchData = { ...result, musicLoaded: true };
-      const cached = catalogCache.get(q);
+      const cached = catalogCache.get(cacheKey);
       if (!force && cached?.fallbackLoaded) searchData = { ...searchData, videos: cached.videos, fallbackLoaded: true };
       registerCatalog(searchData);
       remoteTracks = searchData.tracks;
-      catalogCache.set(q, searchData);
+      catalogCache.set(cacheKey, searchData);
     } else if (target.startsWith("artist:")) {
       const id = target.slice(7);
       const result = !force && artists.get(id)?.tracks ? artists.get(id) : await musicRequest("artist", { id, name: artists.get(id)?.name, force });
@@ -614,7 +646,7 @@ async function loadCatalog(force = false) {
     if (ticket !== requestId) return;
     remoteStatus = "ready";
     render();
-    if (target === "search" && searchCategory === "videos" && !searchData.fallbackLoaded) loadMoreVideos(ticket);
+    if (target === "search" && searchSource === 'main' && searchCategory === "videos" && !searchData.fallbackLoaded) loadMoreVideos(ticket);
   } catch (error) {
     if (ticket !== requestId) return;
     catalogError = String(error.message || error);
@@ -624,7 +656,7 @@ async function loadCatalog(force = false) {
 }
 
 function navigationSnapshot() {
-  return { page, sort, query, searchCategory, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
+  return { page, sort, query, searchCategory, searchSource, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
 }
 
 function navigate(next, remember = true) {
@@ -640,10 +672,10 @@ function navigate(next, remember = true) {
   document.body.classList.remove("player-expanded");
   if (page !== "search") { query = ""; $("#search").value = ""; }
   remoteStatus = "ready";
-  render();
+  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog();
+  else render();
   window.scrollTo({ top: 0 });
   trackWindows?.refresh();
-  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog();
   if (next === "search") requestAnimationFrame(() => $("#search").focus());
 }
 
@@ -656,12 +688,12 @@ function goBack() {
   sort = previous.sort;
   query = previous.query;
   searchCategory = previous.searchCategory;
+  if (page === 'search') rememberSearchSource(previous.searchSource);
   artistReleaseTab = previous.artistReleaseTab;
   artistSongLimit = previous.artistSongLimit;
   releaseFilter = previous.releaseFilter;
   releaseLimit = previous.releaseLimit;
   $("#search").value = query;
-  render();
   if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) {
     const loaded = loadCatalog();
     const restoringRequest = requestId;
@@ -672,6 +704,7 @@ function goBack() {
       }
     });
   } else {
+    render();
     window.scrollTo({ top: previous.scroll });
     trackWindows?.refresh();
   }
@@ -688,6 +721,7 @@ if (platform === 'android') {
 }
 
 function updatePlayIcons() {
+  lyricsView.playback(playing, loading);
   $('#seek').disabled = !current || loading;
   $("#play-pause").innerHTML = icon(playing ? "pause" : "play");
   $("#play-pause").setAttribute("aria-label", playing ? tr("Pause") : tr("Play"));
@@ -702,6 +736,8 @@ function updatePlayer() {
   $("#now-artist").disabled = !current?.artists?.some(a => a.id);
   $("#now-art").innerHTML = current ? art(current, false) : icon("disc");
   $("#now-like").disabled = !current;
+  $("#lyrics-toggle").disabled = !current;
+  lyricsSession.trackChanged(current);
   $("#now-like").classList.toggle("liked", !!current && isLiked(current.id));
   $("#now-like").setAttribute("aria-label", current && isLiked(current.id) ? tr("Unlike current song") : tr("Like current song"));
   ["#play-pause", "#previous", "#next"].forEach((selector) => $(selector).disabled = !current);
@@ -711,8 +747,18 @@ function updatePlayer() {
   renderQueue();
 }
 
+function showTrackLyrics() {
+  if (!current) return;
+  const opened = lyricsSession.open(current);
+  lyricsView.playback(playing, loading);
+  lyricsView.progress(lyricsSession.position, current.duration || 0);
+  return opened;
+}
+
 function updateProgress(position = audio.currentTime, duration = audio.duration) {
+  lyricsSession.sync(position);
   const length = Number.isFinite(duration) && duration > 0 ? duration : current?.duration || 0;
+  lyricsView.progress(lyricsSession.position, length);
   if (!seeking) {
     $("#seek").value = length ? Math.min(1000, position / length * 1000) : 0;
     setRange($("#seek"));
@@ -725,6 +771,17 @@ function updateProgress(position = audio.currentTime, duration = audio.duration)
 }
 
 function setRange(input) { input.style.setProperty("--fill", `${Number(input.value) / Number(input.max) * 100}%`); }
+
+function seekPlayback(seconds) {
+  if (!current || loading || !Number.isFinite(seconds)) return false;
+  const length = nativeAudio ? current.duration : audio.duration || current.duration;
+  if (!Number.isFinite(length) || length <= 0) return false;
+  const time = Math.min(length, Math.max(0, seconds));
+  if (nativeAudio) nativeAudio.command("seek", String(time));
+  else audio.currentTime = time;
+  updateProgress(time, length);
+  return true;
+}
 
 function mediaMetadata() {
   if (current && "mediaSession" in navigator && "MediaMetadata" in window) {
@@ -783,6 +840,7 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
   let bufferedSource;
   if (!nativeAudio && existingQueue && !force && nextPreload && nextPreload.key === key) {
     const request = nextPreload;
+    if (platform === 'windows') audio.pause();
     const staged = await request.task;
     if (ticket !== playTicket) return;
     if (staged && request === nextPreload && queue.some(track => track.queueKey === key)) {
@@ -843,11 +901,27 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
     primeNextTrack();
   } catch (error) {
     if (ticket !== playTicket) return;
+    if (audio instanceof BrowserPlayer) {
+      playing = false;
+      clearPreload();
+      if (error?.name === 'AbortError') return;
+    }
     console.error(error);
-    toast(error.name === "NotAllowedError" ? tr("Tap play to start listening.") : current.source === "local" ? tr("This file couldn’t play. Try an MP3, or import the file again.") : String(error.message || error || tr("This recording is unavailable right now.")), 6500);
+    toast(playbackErrorMessage(error), 6500);
   } finally {
     if (ticket === playTicket) { loading = false; updatePlayIcons(); }
   }
+}
+
+function playbackErrorMessage(error) {
+  if (error?.name === 'NotAllowedError') return tr('Tap play to start listening.');
+  if (current?.source === 'local') return tr('This file couldn’t play. Try an MP3, or import the file again.');
+  if (audio instanceof BrowserPlayer && (error?.name === 'NotSupportedError' || (error && error === audio.error))) {
+    return current?.source === 'monochrome'
+      ? tr('Couldn’t play this recording from the main catalog. Press Play to retry.')
+      : tr('Couldn’t play this recording. Press Play to retry.');
+  }
+  return tr(String(error?.message || error || 'This recording is unavailable right now.'));
 }
 
 async function togglePlayback() {
@@ -859,11 +933,20 @@ async function togglePlayback() {
     return;
   }
   if (loading) { ++playTicket; loading = false; audio.pause(); updatePlayIcons(); return; }
+  if (audio instanceof BrowserPlayer && audio.error) { await playAt(queueIndex, queue, true); return; }
   if (audio.paused) {
     if (linuxPlayback && audio.entry !== current.queueKey) { await playAt(queueIndex); return; }
     if (audio.error && ["monochrome", "youtube"].includes(current.source)) { await playAt(queueIndex, queue, true); return; }
     if (!audio.src) { await playAt(queueIndex); return; }
-    try { await audio.play(); if (markPlaylistPlayed(current.playlistId)) saveLibrary().catch(() => {}); } catch { toast(tr("Couldn’t start this track. Choose it again to retry.")); }
+    const ticket = playTicket;
+    try {
+      await audio.play();
+      if (ticket === playTicket && markPlaylistPlayed(current.playlistId)) saveLibrary().catch(() => {});
+    } catch (error) {
+      if (ticket !== playTicket || error?.name === 'AbortError') return;
+      if (audio instanceof BrowserPlayer) { playing = false; updatePlayIcons(); }
+      toast(audio instanceof BrowserPlayer ? playbackErrorMessage(error) : tr('Couldn’t start this track. Choose it again to retry.'), 6500);
+    }
   } else audio.pause();
 }
 
@@ -1286,11 +1369,17 @@ async function followArtist(id) {
   toast(followed(id) ? tr('Following {artist}.', { artist: a.name }) : tr('Unfollowed {artist}.', { artist: a.name }));
 }
 
+function rememberSearchSource(source) {
+  searchSource = source;
+  try { localStorage.setItem('undertone.searchSource', source); } catch { /* Keep the selection for this session. */ }
+}
+
 function searchName(name, category = "all") {
   if (page !== "search" || (platform === 'android' && (query !== name || searchCategory !== category))) navigationHistory.push(navigationSnapshot());
   page = "search";
   query = name;
   searchCategory = category;
+  if (category === 'videos') rememberSearchSource('main');
   $("#search").value = name;
   window.scrollTo({ top: 0 });
   loadCatalog();
@@ -1779,6 +1868,15 @@ const actions = {
   ...updates?.actions,
   ...link.actions,
   'set-language': button => changeLanguage(button.dataset.lang),
+  'search-source': button => {
+    const source = button.dataset.source;
+    if (source === searchSource || !['main', 'audius'].includes(source)) return;
+    navigationHistory.push(navigationSnapshot());
+    clearTimeout(searchTimer);
+    rememberSearchSource(source);
+    loadCatalog();
+  },
+  'audius-policy': button => native.invoke('audius_policy', { document: button.dataset.document }),
   'search-youtube': async () => { const ticket = requestId; toast(tr("Checking YouTube for more recordings…")); const result = await musicRequest('fallback', { query, artists: searchData.artists }); if (ticket !== requestId) return; registerCatalog(result); searchData.tracks = rankTracks([...searchData.tracks, ...result.tracks], query); searchData.notice = result.tracks.length ? "YouTube song results added. Each row shows its source." : "No additional YouTube recordings were available."; render(); },
   back: goBack,
   "focus-search": () => page === "search" ? $("#search").focus() : navigate("search"),
@@ -1882,6 +1980,8 @@ const actions = {
   repeat: () => { repeat = { off: "all", all: "one", one: "off" }[repeat]; updateModes(); if (nativeAudio) nativeAudio.command("repeat", repeat); else primeNextTrack(); },
   mute: () => { audio.muted = !audio.muted; updateVolume(); if (nativeAudio) nativeAudio.command("volume", String(audio.muted ? 0 : audio.volume)); },
   queue: () => { const open = $("#queue-panel").classList.toggle("hidden") === false; $("#queue-toggle").classList.toggle("on", open); $("#queue-toggle").setAttribute("aria-expanded", open); renderQueue(); },
+  lyrics: () => showTrackLyrics(),
+  'lyrics-retry': () => showTrackLyrics(),
   "queue-play": (button) => playAt(Number(button.dataset.index)),
   expand: () => { if (window.innerWidth <= 650) document.body.classList.toggle("player-expanded"); else actions.queue(); },
   like: (button) => likeTrack(button.dataset.id),
@@ -1984,6 +2084,7 @@ $("#search").addEventListener("input", () => {
   page = "search";
   ++requestId;
   remoteStatus = "loading";
+  videoLoading = false;
   render();
   clearTimeout(searchTimer);
   if (query) searchTimer = setTimeout(() => loadCatalog(), 450);
@@ -2054,9 +2155,7 @@ $("#seek").addEventListener("change", () => {
   seeking = false;
   const length = nativeAudio ? current?.duration || 0 : audio.duration;
   if (!Number.isFinite(length) || !length) return;
-  const time = Number($("#seek").value) / 1000 * length;
-  if (nativeAudio) nativeAudio.command("seek", String(time));
-  else audio.currentTime = time;
+  seekPlayback(Number($("#seek").value) / 1000 * length);
 });
 
 audio.addEventListener("play", () => { playing = true; updatePlayIcons(); });
@@ -2074,10 +2173,20 @@ audio.addEventListener('trackchange', event => {
   queueIndex = index; current = queue[index];
   recordRecent(current); mediaMetadata(); updatePlayer(); primeNextTrack();
 });
-audio.addEventListener("error", () => { if (!current || !audio.src) return; clearPreload(); playing = loading = false; updatePlayIcons(); toast(audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection.")), 6500); });
+audio.addEventListener("error", () => {
+  if (!current || !audio.src) return;
+  if (audio instanceof BrowserPlayer && audio.entry !== current.queueKey) return;
+  clearPreload();
+  playing = loading = false;
+  updatePlayIcons();
+  const message = audio instanceof BrowserPlayer ? playbackErrorMessage(audio.error) :
+    audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection."));
+  toast(message, 6500);
+});
 
 document.addEventListener("keydown", (event) => {
   const editing = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;
+  if (event.key === 'Escape' && lyricsView.isOpen()) return;
   if (event.key === "Escape") { document.body.classList.remove("player-expanded"); $("#queue-panel").classList.add("hidden"); $("#queue-toggle").classList.remove("on"); $("#queue-toggle").setAttribute("aria-expanded", "false"); }
   if (editing || dialog.open || event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === "/") { event.preventDefault(); navigate("search"); }

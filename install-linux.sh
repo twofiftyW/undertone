@@ -52,4 +52,4 @@ EOF
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$desktop_dir" >/dev/null 2>&1 || true
 fi
-printf '%s\n' 'Installed Undertone Alpha 0.1.0-beta. Restart Undertone Alpha, or open it from your application launcher.'
+printf '%s\n' 'Installed Undertone Alpha. Restart Undertone Alpha, or open it from your application launcher.'

@@ -107,3 +107,12 @@ pub fn spotify_help() -> Result<(), String> {
 pub fn github_sign_in() -> Result<(), String> {
     open_external("https://github.com/login/device")
 }
+
+#[tauri::command]
+pub fn audius_policy(document: String) -> Result<(), String> {
+    match document.as_str() {
+        "terms" => open_external("https://audius.co/documents/ApiTerms.pdf"),
+        "privacy" => open_external("https://audius.co/documents/PrivacyPolicy.pdf"),
+        _ => Err("Unknown Audius document".into()),
+    }
+}

@@ -228,6 +228,12 @@ def dispatch(operation, args):
     query = str(args.get("query") or "").strip()[:300]
     ident = str(args.get("id") or args.get("seed") or "")
     force = bool(args.get("force"))
+    if operation == 'lyrics':
+        import lyrics
+        return lyrics.lookup(args)
+    if operation == 'audius_search':
+        import audius
+        return audius.search(query)
     if operation in ('link_discover_phones', 'link_invite_phone'):
         import device_sync
         if operation == 'link_discover_phones':

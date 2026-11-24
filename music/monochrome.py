@@ -7,7 +7,7 @@ from datetime import date
 import requests
 
 BASE = 'https://tracks.monochrome.st'
-IDENTIFIER = re.compile(r'\d{17,20}\Z')
+IDENTIFIER = re.compile(r'[0-9]{17,20}\Z')
 _match_worker = threading.local()
 
 
@@ -83,7 +83,17 @@ def track(item, fallback=None, album=None):
     duration = float(item.get('duration') or 0)
     album_id = str(item.get('releaseId') or '')
     album_data = album or ({'id': 'mono:album:' + album_id, 'title': item.get('albumTitle') or item.get('releaseTitle') or ''} if album_id else {})
-    return {'id': 'monochrome:' + ident, 'remoteId': ident, 'source': 'monochrome', 'kind': 'song', 'title': str(item['title']), 'artist': ', '.join(a['name'] for a in credits) or 'Unknown artist', 'artists': credits, 'artwork': item.get('artwork') or (album or {}).get('artwork') or '', 'duration': round(duration / 1000 if duration > 1000 else duration), 'album': {'id': album_data.get('id') or '', 'title': album_data.get('title') or ''}, 'explicit': bool(item.get('explicit')), 'isrc': str(item.get('isrc') or ''), 'year': str(item.get('releaseDate') or '')[:4], 'genre': ''}
+    recording_id = str(item.get('recordingId') or '')
+    return {
+        'id': 'monochrome:' + ident, 'remoteId': ident, 'source': 'monochrome', 'kind': 'song',
+        **({'recordingId': recording_id} if IDENTIFIER.fullmatch(recording_id) else {}),
+        'title': str(item['title']), 'artist': ', '.join(a['name'] for a in credits) or 'Unknown artist',
+        'artists': credits, 'artwork': item.get('artwork') or (album or {}).get('artwork') or '',
+        'duration': round(duration / 1000 if duration > 1000 else duration),
+        'album': {'id': album_data.get('id') or '', 'title': album_data.get('title') or ''},
+        'explicit': bool(item.get('explicit')), 'isrc': str(item.get('isrc') or ''),
+        'year': str(item.get('releaseDate') or '')[:4], 'genre': '',
+    }
 
 
 def search(query):

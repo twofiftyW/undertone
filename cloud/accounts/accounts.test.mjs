@@ -18,6 +18,17 @@ const snapshot = (liked, list, name = 'Mix') => accountSnapshot({
   liked, playlists: [{ id: 'mix', name, trackIds: list }], tracks: Object.fromEntries([...liked, ...list].map(id => [id, raw(id)]))
 });
 
+test('library sync preserves the exact Monochrome recording ID as a string', () => {
+  const id = 'monochrome:175366268671557632';
+  const track = { ...raw(id), recordingId: '198091630517948416' };
+  const library = { liked: [id], tracks: { [id]: track } };
+  assert.equal(decodeSnapshot(JSON.stringify(accountSnapshot(library))).tracks[id].recordingId, track.recordingId);
+  for (const invalid of [undefined, 198091630517948416, '1', 'wrong']) {
+    track.recordingId = invalid;
+    assert.equal(accountSnapshot(library).tracks[id].recordingId, undefined);
+  }
+});
+
 test('library sync preserves distinct edits, removals, repeated tracks, and device downloads', () => {
   const base = snapshot(['song-a', 'song-b'], ['song-a', 'song-b', 'song-a']);
   const here = snapshot(['song-b', 'song-c'], ['song-a', 'song-a', 'song-c'], 'Renamed');

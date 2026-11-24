@@ -22,9 +22,19 @@ export class BrowserPlayer extends EventTarget {
     this._createAudio = createAudio;
     this._next = null;
     this.entry = '';
-    this._forward = event => this.dispatchEvent(new Event(event.type));
+    this._started = false;
+    this._forward = event => {
+      if (event.type === 'error') {
+        // A failure to start already rejects play(). Events report failures after startup.
+        if (!this._started || !this._active.error) return;
+        this._started = false;
+      }
+      this._emitMediaEvent(event.type);
+    };
     for (const name of mediaEvents) element.addEventListener(name, this._forward);
   }
+
+  _emitMediaEvent(type) { this.dispatchEvent(new Event(type)); }
 
   get src() { return this._active.src; }
   get duration() { return this._active.duration; }
@@ -37,15 +47,22 @@ export class BrowserPlayer extends EventTarget {
   get muted() { return this._active.muted; }
   set muted(value) { this._active.muted = value; }
   load() { this._active.load(); }
-  play() { return this._active.play(); }
+  async play() {
+    const element = this._active;
+    const entry = this.entry;
+    this._started = false;
+    await element.play();
+    if (this._active === element && this.entry === entry && !element.error) this._started = true;
+  }
   pause() { this._active.pause(); }
 
   removeAttribute(name) {
     this._active.removeAttribute(name);
-    if (name === 'src') this.entry = '';
+    if (name === 'src') { this.entry = ''; this._started = false; }
   }
 
   setSource(url, key) {
+    this._started = false;
     this.entry = key;
     this._active.src = url;
   }
@@ -75,6 +92,7 @@ export class BrowserPlayer extends EventTarget {
     this._release(previous);
     this._next = null;
     this._active = next.element;
+    this._started = false;
     this.entry = key;
     this.volume = previous.volume;
     this.muted = previous.muted;

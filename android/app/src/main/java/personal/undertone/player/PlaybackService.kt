@@ -81,6 +81,8 @@ class PlaybackService : Service() {
         private const val CHANNEL = "undertone_playback"
         private const val NOTIFICATION = 14
         private const val PRELOAD_WINDOW_MS = 20_000L
+        private val MONOCHROME_ID = Regex("[0-9]{17,20}")
+        private val AUDIUS_ID = Regex("[A-Za-z0-9]{1,100}")
     }
 
     // The same load can move from the queue to the foreground while it is still resolving or buffering.
@@ -238,12 +240,27 @@ class PlaybackService : Service() {
         publishQueue()
     }
 
+    private fun playbackUri(track: JSONObject, offlineOnly: Boolean): String? {
+        val id = track.optString("remoteId")
+        val source = track.optString("source")
+        if (source == "audius" && AUDIUS_ID.matches(id)) {
+            return if (offlineOnly) null else "https://discoveryprovider.audius.co/v1/tracks/$id/stream?app_name=UndertonePersonal"
+        }
+        if (source == "monochrome" && MONOCHROME_ID.matches(id)) {
+            // An existing download still goes through the engine's complete-file and format checks.
+            if (!File(filesDir, "downloads/$id.flac").isFile) {
+                return if (offlineOnly) null else "https://tracks.monochrome.st/track/$id"
+            }
+        }
+        val result = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track).put("offlineOnly", offlineOnly))
+        return if (result.isNull("url")) null else result.getString("url")
+    }
+
     private fun resolveTrack(load: TrackLoad, track: JSONObject, offlineOnly: Boolean = false) {
         workers.execute {
             try {
-                val result = Engine.call(applicationContext, "resolve_track", JSONObject().put("track", track).put("offlineOnly", offlineOnly))
-                if (result.isNull("url")) { handler.post { if (load === nextLoad) load.failed = true }; return@execute }
-                val uri = result.getString("url")
+                val uri = playbackUri(track, offlineOnly)
+                if (uri == null) { handler.post { if (load === nextLoad) load.failed = true }; return@execute }
                 require(validSource(uri))
                 handler.post {
                     if (load !== activeLoad && load !== nextLoad) return@post

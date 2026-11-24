@@ -1,6 +1,6 @@
 # Undertone
 
-A personal music player for Linux, Windows, Android, and iOS. **Undertone 0.1.1-beta** supports Linux x86_64, Windows 10/11 x64, Android 8+ on arm64-v8a and x86_64, and iOS 16+.
+A personal music player for Linux, Windows, Android, and iOS. **Undertone 0.1.2-beta** supports Linux x86_64, Windows 10/11 x64, Android 8+ on arm64-v8a and x86_64, and iOS 16+.
 
 Songs, artists, albums, and release tracks use Monochrome. When Monochrome has no song match, search and Spotify matching try YouTube. There is also a separate Music videos search and a “Search YouTube songs too” button. Linux playback uses mpv with its own **Undertone** mixer identity, so another mpv application’s saved mute/volume settings do not silence this app. The app follows your system’s default output. Only one Undertone instance runs in a desktop session.
 
@@ -8,7 +8,7 @@ Songs, artists, albums, and release tracks use Monochrome. When Monochrome has n
 
 - **Linux:** Extract the `linux-x86_64.tar.gz` archive, then run `./install-linux.sh` from its `linux` folder. Open Undertone Alpha from your app launcher. In a source checkout, `./run.sh` opens the packaged Linux build.
 - **Windows:** Extract the entire `windows-x64.zip` archive and run `Undertone.exe` inside the Undertone folder. [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. Python and the music engine are included.
-- **Android:** Install Undertone 0.1.1-beta over an earlier release to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
+- **Android:** Install Undertone 0.1.2-beta over an earlier release to keep your library. Both use the original application ID (`personal.undertone.player`) and signing certificate. The app installs alongside the published 0.0.4-alpha (`personal.undertone.player.alpha`), with a separate library.
 - **iOS:** The iPhone IPA requires Apple signing and a provisioning profile before it can be installed on a device. The simulator bundle runs on a Mac with Xcode and the matching simulator architecture. The same library UI, catalog engine, and offline downloads run inside the app. iOS can suspend imports and downloads after its background time allowance. Reopen Undertone and resume a paused job in the progress dialog.
 
 Large collections keep their full scroll range on all three platforms. The app renders the visible tracks and nearby rows as you scroll.
@@ -78,6 +78,8 @@ Public Spotify playlist links are a best-effort alternative. Spotify may expose 
 
 ## Listening and your library
 
+In **Search**, choose **Main catalog** or **Audius**. The main catalog searches Monochrome and keeps the existing YouTube options. Audius searches for publicly streamable tracks and plays the selected recording in Undertone. The app remembers the search source on this device. Songs already in a playlist or the queue keep their original source.
+
 Artist and album names open dedicated pages. Discography has album/single filters, date/name sorting, and list/grid views. Home features artists from your recent listening, with likes and follows filling available spots. It filters out recently played tracks and includes related artists when Monochrome supplies them. A new library starts with a search prompt. Artist mixes play additional tracks by the selected artist. Music videos remain separate YouTube results and play their audio through the same player. Releases with no usable artwork automatically show a four-tile cover made from their first four songs. Missing song artwork uses generated title/color tiles; playlist covers use the same approach.
 
 Import or drag local audio into the app. Originals stay in place. Space plays/pauses, `/` opens search, and `M` mutes. The player’s **…** sound button shows the current mixer state and can restore Undertone’s output without changing other applications or the system master volume.
@@ -95,6 +97,10 @@ Open the queue using its player button. On a small phone screen, expand Now play
 Use **+** or **Add to queue** to put a song first under **Up next**. On Android, swipe a song row right to do the same. Album pages can add an entire release, in album order, at the front of the queue. Adding or reordering turns shuffle off so the selected order is followed.
 
 The player starts buffering the next stream with about twenty seconds left. **Next** reuses an ongoing load. It also prepares the next available local file during offline playback. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
+
+Choose **Lyrics** in the player to open the full-screen lyrics view. The current line follows playback. Select a line to jump to that part of the song, or scroll to read ahead and choose **Back to current line** to follow along again. Songs with plain lyrics keep their original verses and line breaks.
+
+While this view is open, it follows the queue and looks up each recording on LRCLIB as needed. Lyrics are saved on the device for offline reading. Saved plain lyrics open immediately. When online, the player periodically checks for a timed version of the same recording. Closing the view keeps the music playing.
 
 ## Build Linux
 
@@ -138,7 +144,7 @@ To build the Android release, run `python3 scripts/android_setup.py` once. Set `
 
 ## Build Windows
 
-On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.1.1-beta-windows-x64.zip`.
+On a Linux development machine, use `python3 scripts/bootstrap.py` to prepare the project-local Rust toolchain and install Node.js, `clang-cl`, `lld-link`, and `uv`. Run `npm install`, then `python3 scripts/windows_build.py`. It cross-builds the x64 executable and packages the Windows Python runtime, catalog tools, and WebView2 app in `dist/Undertone-0.1.2-beta-windows-x64.zip`.
 
 The expected Android signing certificate SHA-256 is `ea5712d23e62568ceb43333a670275ed50777187fc7c52ce89ad4b8a516b2dfb`. The build helper also reads the original keystore from `.private/android-signing.p12` and the password from `.private/android-signing-password`. Git ignores the `.private` directory. Restrict access to it to the Windows account or Unix user that signs the release. User libraries and downloaded music are stored separately from the app.
 
