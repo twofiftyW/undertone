@@ -71,7 +71,7 @@ def build(sdk, xcframework, version):
         "UndertoneVersion": version,
         "CFBundleExecutable": "Undertone", "CFBundleIdentifier": BUNDLE_ID,
         "CFBundleName": "Undertone", "CFBundlePackageType": "APPL",
-        "CFBundleVersion": "20", "CFBundleShortVersionString": version.split("-")[0],
+        "CFBundleVersion": "22", "CFBundleShortVersionString": version.split("-")[0],
         "CFBundleSupportedPlatforms": ["iPhoneSimulator" if simulator else "iPhoneOS"],
         "MinimumOSVersion": "16.0", "UIDeviceFamily": [1, 2], "UILaunchScreen": {},
         "UIBackgroundModes": ["audio"],
