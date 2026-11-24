@@ -527,8 +527,29 @@ test('downloaded songs resolve from the device without resolving an internet str
   assert.equal(canDownload({ ...track, source: 'unmatched' }), false);
   assert.equal(canDownload({ source: 'youtube', kind: 'song', remoteId: 'ao4RCon11eY' }), true);
   assert.equal(canDownload({ source: 'youtube', kind: 'video', remoteId: 'ao4RCon11eY' }), false);
-  const streamed = await resolveCatalogAudio(track, { invoke: async () => null }, async () => ({ url: 'https://example.org/song' }));
-  assert.equal(streamed.url, 'https://example.org/song');
+});
+
+test('a Monochrome cache miss resolves locally, with offline-only playback and other sources preserved', async () => {
+  const track = { source: 'monochrome', remoteId: '159277913216937984', duration: 132 };
+  const noEngine = () => assert.fail('A deterministic stream URL started the music engine');
+  const native = { invoke: async (name, args) => {
+    assert.equal(name, 'offline_file');
+    assert.deepEqual(args, { id: track.remoteId, source: track.source });
+    return null;
+  } };
+  const expected = { url: 'https://tracks.monochrome.st/track/159277913216937984', format: 'flac', duration: 132 };
+  assert.deepEqual(await resolveCatalogAudio(track, native, noEngine), expected);
+  assert.deepEqual(await resolveCatalogAudio(track, null, noEngine, true), expected);
+  assert.equal(await resolveCatalogAudio(track, native, noEngine, false, true), null);
+
+  for (const other of [{ source: 'youtube', remoteId: 'ao4RCon11eY' }, { ...track, remoteId: 'mono:track:' + track.remoteId }]) {
+    const result = await resolveCatalogAudio(other, null, (operation, args) => {
+      assert.equal(operation, 'resolve');
+      assert.deepEqual(args, { id: other.remoteId, source: other.source, track: other, force: true });
+      return { url: 'from-engine' };
+    }, true);
+    assert.equal(result.url, 'from-engine');
+  }
 });
 
 test('a metadata-only PC import can be filled on Android and is skipped once its audio exists', async () => {

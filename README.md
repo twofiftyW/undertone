@@ -78,6 +78,8 @@ Public Spotify playlist links are a best-effort alternative. Spotify may expose 
 
 ## Listening and your library
 
+In **Search**, choose **Main catalog** or **Audius**. The main catalog searches Monochrome and keeps the existing YouTube options. Audius searches for publicly streamable tracks and plays the selected recording in Undertone. The app remembers the search source on this device. Songs already in a playlist or the queue keep their original source.
+
 Artist and album names open dedicated pages. Discography has album/single filters, date/name sorting, and list/grid views. Home features artists from your recent listening, with likes and follows filling available spots. It filters out recently played tracks and includes related artists when Monochrome supplies them. A new library starts with a search prompt. Artist mixes play additional tracks by the selected artist. Music videos remain separate YouTube results and play their audio through the same player. Releases with no usable artwork automatically show a four-tile cover made from their first four songs. Missing song artwork uses generated title/color tiles; playlist covers use the same approach.
 
 Import or drag local audio into the app. Originals stay in place. Space plays/pauses, `/` opens search, and `M` mutes. The player’s **…** sound button shows the current mixer state and can restore Undertone’s output without changing other applications or the system master volume.

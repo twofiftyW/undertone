@@ -231,6 +231,9 @@ def dispatch(operation, args):
     if operation == 'lyrics':
         import lyrics
         return lyrics.lookup(args)
+    if operation == 'audius_search':
+        import audius
+        return audius.search(query)
     if operation in ('link_discover_phones', 'link_invite_phone'):
         import device_sync
         if operation == 'link_discover_phones':

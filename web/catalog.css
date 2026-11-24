@@ -57,6 +57,13 @@
 .search-prompts .icon { width:14px; height:14px; }
 .search-page-heading { display:flex; justify-content:space-between; align-items:end; gap:15px; margin:16px 0 23px; }
 .search-page-heading h1 { font-size:29px; letter-spacing:-.9px; margin-top:9px; }
+.view.search-sources { display:none; min-height:0; padding-top:0; padding-bottom:0; gap:6px; align-items:center; flex-wrap:wrap; }
+.searching .view.search-sources { display:flex; }
+.search-sources > span { color:var(--secondary); font-size:12px; margin-inline-end:4px; }
+.search-sources .chip { min-height:36px; padding:6px 13px; color:var(--secondary); }
+.search-sources .chip[aria-pressed=true] { background:var(--accent-tint); border-color:var(--accent-border); color:var(--accent); }
+.audius-links { display:flex; flex-wrap:wrap; gap:6px 16px; margin:24px 0 10px; }
+.audius-links a,.audius-links button { color:var(--muted); font-size:12px; padding:4px 0; text-decoration:underline; }
 .search-status { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; text-align:right; line-height:1.7; max-width:230px; }
 .loading-dot { width:6px; height:6px; background:var(--accent); border-radius:50%; flex-shrink:0; animation:pulse 1.2s infinite; }
 .search-filters,.release-tabs { display:flex; align-items:center; gap:8px; margin-bottom:27px; overflow-x:auto; scrollbar-width:none; }

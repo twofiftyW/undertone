@@ -80,6 +80,11 @@
       <div class="topbar-actions"><button type="button" id="update-available" class="update-available hidden" data-action="update-open" aria-haspopup="dialog" data-i18n="Update available">Update available</button><button class="import-top" data-action="import" aria-haspopup="dialog" aria-label="Import" data-i18n-aria-label="Import"><svg class="icon"><use href="#i-upload"/></svg><span data-i18n="Import">Import</span></button><button class="icon-btn settings-button" data-action="settings" aria-haspopup="dialog" aria-label="Settings" data-i18n-aria-label="Settings" title="Settings" data-i18n-title="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button></div>
     </header>
     <button id="desktop-import-progress" class="secondary-btn" data-action="show-spotify-progress" aria-haspopup="dialog" hidden><svg class="icon" aria-hidden="true"><use href="#i-import"/></svg><span></span></button>
+    <div class="view search-sources" id="search-sources" role="group" aria-labelledby="search-source-label">
+      <span id="search-source-label" data-i18n="Source">Source</span>
+      <button class="chip" type="button" data-action="search-source" data-source="main" aria-pressed="true" data-i18n="Main catalog">Main catalog</button>
+      <button class="chip" type="button" data-action="search-source" data-source="audius" aria-pressed="false">Audius</button>
+    </div>
     <div class="view" id="view" aria-live="polite" aria-busy="true"></div>
     <footer class="content-footer"><span data-i18n="Made for your kind of listening.">Made for your kind of listening.</span><span><span data-i18n="Monochrome · YouTube fallbacks & music videos">Monochrome · YouTube fallbacks & music videos</span> <span class="footer-dot">·</span> <span data-i18n="Your files, offline">Your files, offline</span></span></footer>
   </main>

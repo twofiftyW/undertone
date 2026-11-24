@@ -269,6 +269,16 @@ class DeviceBridge(private val context: Context, private val callback: (String, 
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.spotify.com/account/privacy/")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); true
     }
 
+    @JavascriptInterface fun audiusPolicy(document: String): String = reply {
+        val url = when (document) {
+            "terms" -> "https://audius.co/documents/ApiTerms.pdf"
+            "privacy" -> "https://audius.co/documents/PrivacyPolicy.pdf"
+            else -> throw IllegalArgumentException("Unknown Audius document")
+        }
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    }
+
     @JavascriptInterface fun githubSignIn(): String = reply {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/login/device")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         true

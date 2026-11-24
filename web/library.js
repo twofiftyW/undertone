@@ -22,9 +22,15 @@ export function canDownload(track) {
 
 // Check the device before resolving a network stream, including after a restart.
 export async function resolveCatalogAudio(track, native, request, force = false, offlineOnly = false) {
-  if (native && canDownload(track)) {
-    const file = await native.invoke('offline_file', { id: track.remoteId, source: track.source });
-    if (file) return { ...file, url: file.nativePath, offline: true };
+  if (canDownload(track)) {
+    if (native) {
+      const file = await native.invoke('offline_file', { id: track.remoteId, source: track.source });
+      if (file) return { ...file, url: file.nativePath, offline: true };
+    }
+    // Monochrome's stream URL is permanent. Desktop would otherwise launch a Python process to build it.
+    if (!offlineOnly && track.source === 'monochrome') {
+      return { url: `https://tracks.monochrome.st/track/${track.remoteId}`, format: 'flac', duration: track.duration || 0 };
+    }
   }
   if (offlineOnly) return null;
   return request('resolve', { id: track.remoteId, source: track.source, track, force });

@@ -47,6 +47,7 @@ async function invoke(command, args, options) {
   if (command === "delete_audio") return call("deleteAudio", args.id);
   if (command === "platform") return "android";
   if (command === 'spotify_help') return call('spotifyHelp');
+  if (command === 'audius_policy') return call('audiusPolicy', args.document);
   if (command === 'github_sign_in') return call('githubSignIn');
   if (['spotify_job_start', 'spotify_job_resume', 'spotify_job_pause', 'spotify_job_status', 'spotify_job_results', 'spotify_job_ack'].includes(command)) return request(command, args);
   if (['music', 'list_downloads', 'offline_file', 'download_track', 'remove_download', 'link_status', 'link_discover', 'link_phone_start', 'link_phone_status', 'link_phone_stop', 'link_pair', 'link_forget', 'link_pull'].includes(command)) return request(command, args);

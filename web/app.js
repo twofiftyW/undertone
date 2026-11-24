@@ -40,6 +40,7 @@ let storageReady = false;
 let saveChain = Promise.resolve();
 let page = "discover";
 let searchCategory = "all";
+let searchSource = localStorage.getItem('undertone.searchSource') === 'audius' ? 'audius' : 'main';
 let query = "";
 const playlistSearchQueries = new Map();
 let remoteTracks = [];
@@ -307,13 +308,31 @@ function renderDiscover() {
   return content;
 }
 
+function audiusPolicyLinks() {
+  const documents = [
+    ['terms', 'ApiTerms.pdf', tr('Audius API terms')],
+    ['privacy', 'PrivacyPolicy.pdf', tr('Audius privacy policy')],
+  ];
+  return `<div class="audius-links">${documents.map(([key, file, label]) => desktop || platform === 'android'
+    ? `<button type="button" data-action="audius-policy" data-document="${key}">${h(label)}</button>`
+    : `<a href="https://audius.co/documents/${file}"${platform === 'ios' ? '' : ' target="_blank" rel="noopener noreferrer"'}>${h(label)}</a>`).join('')}</div>`;
+}
+
 function renderSearch() {
+  if (!query && searchSource === 'audius') return `<div class="search-intro"><h1>${h(tr('Search Audius'))}</h1><p>${h(tr('Search by track or artist.'))}</p></div>` + audiusPolicyLinks();
   if (!query) return `<div class="search-intro"><span class="eyebrow">${h(tr("LESS DIGGING. MORE LISTENING."))}</span><h1>${h(tr("Songs. Artists. Albums."))}</h1><p>${h(tr("Find a recording, explore an artist, or play an entire release."))}</p><div class="search-prompts">${recommendationArtists().map(({ name }) => `<button class="chip" data-action="search-name" data-name="${h(name)}">${icon("search")}${h(name)}</button>`).join("")}</div></div>${library.followedArtists.length ? `<section class="music-section"><div class="section-heading"><h2>${h(tr("Your artists"))}</h2></div><div class="artist-grid">${library.followedArtists.slice(0, 6).map(artistCard).join("")}</div></section>` : ""}`;
   const tabs = [["all", tr("All")], ["songs", tr("Songs")], ["artists", tr("Artists")], ["albums", tr("Albums")], ["videos", tr("Music videos")]];
-  const localMatches = getTracks(library.imports).filter(t => matches(t, query));
-  const music = searchTracks(searchData, searchCategory);
+  const music = searchSource === 'audius' ? searchData.tracks : searchTracks(searchData, searchCategory);
   const exactArtist = searchData.artists?.find(a => a.name.normalize("NFKC").toLocaleLowerCase() === query.normalize("NFKC").toLocaleLowerCase());
-  let output = `<div class="search-page-heading"><div><span class="eyebrow">${h(tr("FIND YOUR SOUND"))}</span><h1>${h(tr('Results for “{query}”', { query }))}</h1></div><span class="search-status">${videoLoading ? `<i class="loading-dot"></i>${h(tr("Checking YouTube for more matches…"))}` : remoteStatus === "ready" ? countLabel(music.length, 'recording') : tr("Searching…")}</span></div><div class="search-filters" aria-label="${h(tr("Search result types"))}">${tabs.map(([value, label]) => `<button class="chip ${searchCategory === value ? "active" : ""}" data-action="search-filter" data-filter="${value}" aria-pressed="${searchCategory === value}">${label}</button>`).join("")}</div>`;
+  let output = `<div class="search-page-heading"><div><span class="eyebrow">${h(tr("FIND YOUR SOUND"))}</span><h1>${h(tr('Results for “{query}”', { query }))}</h1></div><span class="search-status">${videoLoading ? `<i class="loading-dot"></i>${h(tr("Checking YouTube for more matches…"))}` : remoteStatus === "ready" ? countLabel(music.length, 'recording') : remoteStatus === 'loading' ? tr("Searching…") : ''}</span></div>`;
+  if (searchSource === 'audius') {
+    if (remoteStatus === 'loading') output += skeleton();
+    else if (remoteStatus === 'error') output += catalogFailure();
+    else output += music.length ? trackRows(music) : `<p class="catalog-empty">${h(tr('No tracks found on Audius.'))}</p>`;
+    return output + audiusPolicyLinks();
+  }
+  const localMatches = getTracks(library.imports).filter(t => matches(t, query));
+  output += `<div class="search-filters" aria-label="${h(tr("Search result types"))}">${tabs.map(([value, label]) => `<button class="chip ${searchCategory === value ? "active" : ""}" data-action="search-filter" data-filter="${value}" aria-pressed="${searchCategory === value}">${label}</button>`).join("")}</div>`;
   if (remoteStatus === "loading") return output + skeleton();
   if (remoteStatus === "error") return output + catalogFailure();
   if (searchData.notice) output += `<p class="catalog-notice">${h(tr(searchData.notice))}</p>`;
@@ -431,6 +450,7 @@ function collectionTracks() {
   if (page === "downloads") return sortedTracks(Object.keys(library.downloads).filter(id => library.downloads[id]?.nativePath));
   if (page.startsWith("playlist:")) return sortedTracks(playlist()?.trackIds || []);
   if (page === "search") {
+    if (searchSource === 'audius') return searchData.tracks;
     const results = searchTracks(searchData, searchCategory);
     return searchCategory === "videos" ? results : [...getTracks(library.imports).filter(t => matches(t, query)), ...results];
   }
@@ -526,6 +546,9 @@ function render() {
   const catalogPage = ["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page);
   view.setAttribute("aria-busy", catalogPage && remoteStatus === "loading" && (page !== "search" || !!query));
   document.body.classList.toggle("searching", page === "search");
+  for (const button of $('#search-sources').querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.source === searchSource));
+  }
   $("#clear-search").classList.toggle("hidden", !query);
   if ($("#navigate-back")) $("#navigate-back").disabled = !navigationHistory.length;
   renderSidebar();
@@ -553,7 +576,7 @@ async function loadMoreVideos(ticket = requestId, force = false) {
     searchData = { ...searchData, videos: rankTracks(result.tracks, q), fallbackLoaded: true };
     registerCatalog(searchData);
     remoteTracks = searchTracks(searchData, searchCategory);
-    catalogCache.set(q, searchData);
+    catalogCache.set('main:' + q, searchData);
   } catch (error) {
     if (ticket === requestId && page === "search") toast(tr("Extra video results couldn’t load. The music results are still available."));
   } finally {
@@ -572,23 +595,24 @@ async function loadCatalog(force = false) {
   render();
   try {
     if (target === "search") {
-      const previous = catalogCache.get(q);
+      const cacheKey = searchSource + ':' + q;
+      const previous = catalogCache.get(cacheKey);
       searchData = previous || { tracks: [], artists: [], albums: [] };
-      if (searchCategory === "videos") {
+      if (searchSource === 'main' && searchCategory === "videos") {
         remoteTracks = searchTracks(searchData, searchCategory);
         remoteStatus = "ready";
         if (force || !searchData.fallbackLoaded) await loadMoreVideos(ticket, force);
         else render();
         return;
       }
-      const result = !force && previous?.musicLoaded ? previous : await musicRequest("search", { query: q, force });
+      const result = !force && previous?.musicLoaded ? previous : await musicRequest(searchSource === 'audius' ? 'audius_search' : 'search', { query: q, force });
       if (ticket !== requestId) return;
       searchData = { ...result, musicLoaded: true };
-      const cached = catalogCache.get(q);
+      const cached = catalogCache.get(cacheKey);
       if (!force && cached?.fallbackLoaded) searchData = { ...searchData, videos: cached.videos, fallbackLoaded: true };
       registerCatalog(searchData);
       remoteTracks = searchData.tracks;
-      catalogCache.set(q, searchData);
+      catalogCache.set(cacheKey, searchData);
     } else if (target.startsWith("artist:")) {
       const id = target.slice(7);
       const result = !force && artists.get(id)?.tracks ? artists.get(id) : await musicRequest("artist", { id, name: artists.get(id)?.name, force });
@@ -622,7 +646,7 @@ async function loadCatalog(force = false) {
     if (ticket !== requestId) return;
     remoteStatus = "ready";
     render();
-    if (target === "search" && searchCategory === "videos" && !searchData.fallbackLoaded) loadMoreVideos(ticket);
+    if (target === "search" && searchSource === 'main' && searchCategory === "videos" && !searchData.fallbackLoaded) loadMoreVideos(ticket);
   } catch (error) {
     if (ticket !== requestId) return;
     catalogError = String(error.message || error);
@@ -632,7 +656,7 @@ async function loadCatalog(force = false) {
 }
 
 function navigationSnapshot() {
-  return { page, sort, query, searchCategory, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
+  return { page, sort, query, searchCategory, searchSource, artistReleaseTab, artistSongLimit, releaseFilter, releaseLimit, scroll: window.scrollY };
 }
 
 function navigate(next, remember = true) {
@@ -648,10 +672,10 @@ function navigate(next, remember = true) {
   document.body.classList.remove("player-expanded");
   if (page !== "search") { query = ""; $("#search").value = ""; }
   remoteStatus = "ready";
-  render();
+  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog();
+  else render();
   window.scrollTo({ top: 0 });
   trackWindows?.refresh();
-  if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) loadCatalog();
   if (next === "search") requestAnimationFrame(() => $("#search").focus());
 }
 
@@ -664,12 +688,12 @@ function goBack() {
   sort = previous.sort;
   query = previous.query;
   searchCategory = previous.searchCategory;
+  if (page === 'search') rememberSearchSource(previous.searchSource);
   artistReleaseTab = previous.artistReleaseTab;
   artistSongLimit = previous.artistSongLimit;
   releaseFilter = previous.releaseFilter;
   releaseLimit = previous.releaseLimit;
   $("#search").value = query;
-  render();
   if (["discover", "search"].includes(page) || /^(artist|album|discography):/.test(page)) {
     const loaded = loadCatalog();
     const restoringRequest = requestId;
@@ -680,6 +704,7 @@ function goBack() {
       }
     });
   } else {
+    render();
     window.scrollTo({ top: previous.scroll });
     trackWindows?.refresh();
   }
@@ -1322,11 +1347,17 @@ async function followArtist(id) {
   toast(followed(id) ? tr('Following {artist}.', { artist: a.name }) : tr('Unfollowed {artist}.', { artist: a.name }));
 }
 
+function rememberSearchSource(source) {
+  searchSource = source;
+  try { localStorage.setItem('undertone.searchSource', source); } catch { /* Keep the selection for this session. */ }
+}
+
 function searchName(name, category = "all") {
   if (page !== "search" || (platform === 'android' && (query !== name || searchCategory !== category))) navigationHistory.push(navigationSnapshot());
   page = "search";
   query = name;
   searchCategory = category;
+  if (category === 'videos') rememberSearchSource('main');
   $("#search").value = name;
   window.scrollTo({ top: 0 });
   loadCatalog();
@@ -1815,6 +1846,15 @@ const actions = {
   ...updates?.actions,
   ...link.actions,
   'set-language': button => changeLanguage(button.dataset.lang),
+  'search-source': button => {
+    const source = button.dataset.source;
+    if (source === searchSource || !['main', 'audius'].includes(source)) return;
+    navigationHistory.push(navigationSnapshot());
+    clearTimeout(searchTimer);
+    rememberSearchSource(source);
+    loadCatalog();
+  },
+  'audius-policy': button => native.invoke('audius_policy', { document: button.dataset.document }),
   'search-youtube': async () => { const ticket = requestId; toast(tr("Checking YouTube for more recordings…")); const result = await musicRequest('fallback', { query, artists: searchData.artists }); if (ticket !== requestId) return; registerCatalog(result); searchData.tracks = rankTracks([...searchData.tracks, ...result.tracks], query); searchData.notice = result.tracks.length ? "YouTube song results added. Each row shows its source." : "No additional YouTube recordings were available."; render(); },
   back: goBack,
   "focus-search": () => page === "search" ? $("#search").focus() : navigate("search"),
@@ -2022,6 +2062,7 @@ $("#search").addEventListener("input", () => {
   page = "search";
   ++requestId;
   remoteStatus = "loading";
+  videoLoading = false;
   render();
   clearTimeout(searchTimer);
   if (query) searchTimer = setTimeout(() => loadCatalog(), 450);
