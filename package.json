@@ -8,7 +8,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "android:build": "python3 scripts/build_android.py",
-    "test": "node --test tests/core.test.mjs tests/lyrics.test.mjs",
+    "test": "node --test tests/core.test.mjs tests/lyrics.test.mjs tests/windows-catalog-player.test.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {

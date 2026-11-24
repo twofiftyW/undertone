@@ -49,6 +49,31 @@ test('preloading uses the last twenty seconds of a streaming track', () => {
   }
 });
 
+test('the browser reports each failed recording once, during startup or after it starts', async () => {
+  const element = new EventTarget();
+  const player = new BrowserPlayer(element);
+  let errors = 0;
+  player.addEventListener('error', () => errors++);
+  element.play = async () => {
+    element.error = { code: 4 };
+    element.dispatchEvent(new Event('error'));
+    throw new DOMException('Failed to load because no supported source was found.', 'NotSupportedError');
+  };
+  player.setSource('https://example.test/expired', 'occurrence');
+  await assert.rejects(player.play(), { name: 'NotSupportedError' });
+  element.dispatchEvent(new Event('error'));
+  assert.equal(errors, 0);
+
+  element.error = null;
+  element.play = async () => {};
+  player.setSource('https://example.test/fresh', 'occurrence');
+  await player.play();
+  element.error = { code: 2 };
+  element.dispatchEvent(new Event('error'));
+  element.dispatchEvent(new Event('error'));
+  assert.equal(errors, 1);
+});
+
 test('Windows switches to the element that is still buffering the selected occurrence', async () => {
   class AudioElement extends EventTarget {
     constructor() { super(); this.volume = 0.25; this.muted = true; this.loads = 0; this.plays = 0; this.sourceChanges = 0; }

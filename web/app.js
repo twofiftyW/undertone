@@ -4,6 +4,7 @@ import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequ
 import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
+import { WindowsCatalogPlayer } from './windows-catalog-player.js';
 import { createLyricsLoader, createLyricsSession } from './lyrics.js';
 import { createLyricsView } from './lyrics-view.js';
 import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyCollections, appendSpotifyToPlaylist, replaceLibraryTracks, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
@@ -25,7 +26,10 @@ const linuxPlayback = platform === 'linux';
 const desktop = linuxPlayback || platform === 'windows';
 const mobileApp = platform === 'android' || platform === 'ios';
 const deviceStorage = desktop || mobileApp;
-const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
+const audioElement = $("#audio");
+const audio = linuxPlayback ? new LinuxPlayer(native) : platform === 'windows'
+  ? new WindowsCatalogPlayer(audioElement, () => current?.recordingId)
+  : nativeAudio ? audioElement : new BrowserPlayer(audioElement);
 const view = $("#view");
 const dialog = $("#dialog");
 const lyricsView = createLyricsView({ dialog, openDialog, closeDialog, seekPlayback });
@@ -836,6 +840,7 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
   let bufferedSource;
   if (!nativeAudio && existingQueue && !force && nextPreload && nextPreload.key === key) {
     const request = nextPreload;
+    if (platform === 'windows') audio.pause();
     const staged = await request.task;
     if (ticket !== playTicket) return;
     if (staged && request === nextPreload && queue.some(track => track.queueKey === key)) {
@@ -896,11 +901,27 @@ async function playAt(index, list = queue, force = false, playlistId = null) {
     primeNextTrack();
   } catch (error) {
     if (ticket !== playTicket) return;
+    if (audio instanceof BrowserPlayer) {
+      playing = false;
+      clearPreload();
+      if (error?.name === 'AbortError') return;
+    }
     console.error(error);
-    toast(error.name === "NotAllowedError" ? tr("Tap play to start listening.") : current.source === "local" ? tr("This file couldn’t play. Try an MP3, or import the file again.") : String(error.message || error || tr("This recording is unavailable right now.")), 6500);
+    toast(playbackErrorMessage(error), 6500);
   } finally {
     if (ticket === playTicket) { loading = false; updatePlayIcons(); }
   }
+}
+
+function playbackErrorMessage(error) {
+  if (error?.name === 'NotAllowedError') return tr('Tap play to start listening.');
+  if (current?.source === 'local') return tr('This file couldn’t play. Try an MP3, or import the file again.');
+  if (audio instanceof BrowserPlayer && (error?.name === 'NotSupportedError' || (error && error === audio.error))) {
+    return current?.source === 'monochrome'
+      ? tr('Couldn’t play this recording from the main catalog. Press Play to retry.')
+      : tr('Couldn’t play this recording. Press Play to retry.');
+  }
+  return tr(String(error?.message || error || 'This recording is unavailable right now.'));
 }
 
 async function togglePlayback() {
@@ -912,11 +933,20 @@ async function togglePlayback() {
     return;
   }
   if (loading) { ++playTicket; loading = false; audio.pause(); updatePlayIcons(); return; }
+  if (audio instanceof BrowserPlayer && audio.error) { await playAt(queueIndex, queue, true); return; }
   if (audio.paused) {
     if (linuxPlayback && audio.entry !== current.queueKey) { await playAt(queueIndex); return; }
     if (audio.error && ["monochrome", "youtube"].includes(current.source)) { await playAt(queueIndex, queue, true); return; }
     if (!audio.src) { await playAt(queueIndex); return; }
-    try { await audio.play(); if (markPlaylistPlayed(current.playlistId)) saveLibrary().catch(() => {}); } catch { toast(tr("Couldn’t start this track. Choose it again to retry.")); }
+    const ticket = playTicket;
+    try {
+      await audio.play();
+      if (ticket === playTicket && markPlaylistPlayed(current.playlistId)) saveLibrary().catch(() => {});
+    } catch (error) {
+      if (ticket !== playTicket || error?.name === 'AbortError') return;
+      if (audio instanceof BrowserPlayer) { playing = false; updatePlayIcons(); }
+      toast(audio instanceof BrowserPlayer ? playbackErrorMessage(error) : tr('Couldn’t start this track. Choose it again to retry.'), 6500);
+    }
   } else audio.pause();
 }
 
@@ -2143,7 +2173,16 @@ audio.addEventListener('trackchange', event => {
   queueIndex = index; current = queue[index];
   recordRecent(current); mediaMetadata(); updatePlayer(); primeNextTrack();
 });
-audio.addEventListener("error", () => { if (!current || !audio.src) return; clearPreload(); playing = loading = false; updatePlayIcons(); toast(audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection.")), 6500); });
+audio.addEventListener("error", () => {
+  if (!current || !audio.src) return;
+  if (audio instanceof BrowserPlayer && audio.entry !== current.queueKey) return;
+  clearPreload();
+  playing = loading = false;
+  updatePlayIcons();
+  const message = audio instanceof BrowserPlayer ? playbackErrorMessage(audio.error) :
+    audio.error?.message || (current.source === "local" ? tr("This file couldn’t play. Your device may not support its format.") : tr("This stream is unavailable. Try another song or check your connection."));
+  toast(message, 6500);
+});
 
 document.addEventListener("keydown", (event) => {
   const editing = /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || event.target.isContentEditable;

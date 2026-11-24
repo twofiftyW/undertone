@@ -130,6 +130,8 @@ export const russian = {
   "Couldn’t download": "Не удалось загрузить",
   "Couldn’t find this recording": "Не удалось найти запись",
   "Couldn’t load this music.": "Не удалось загрузить музыку.",
+  "Couldn’t play this recording from the main catalog. Press Play to retry.": "Не удалось воспроизвести запись из основного каталога. Нажмите «Воспроизвести», чтобы повторить.",
+  "Couldn’t play this recording. Press Play to retry.": "Не удалось воспроизвести запись. Нажмите «Воспроизвести», чтобы повторить.",
   "Couldn’t save your changes. Check that your device has free space.": "Не удалось сохранить изменения. Проверьте свободное место на устройстве.",
   "Couldn’t start this track. Choose it again to retry.": "Не удалось воспроизвести трек. Выберите его снова.",
   "Create a playlist": "Создать плейлист",

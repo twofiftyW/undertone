@@ -18,6 +18,8 @@ function trackMetadata(track) {
   if (!['monochrome', 'youtube', 'audius', 'local', 'unmatched'].includes(track.source)) return null;
   return {
     ...fields(track, TRACK_FIELDS),
+    ...(track.source === 'monochrome' && typeof track.recordingId === 'string' && /^[0-9]{17,20}$/.test(track.recordingId)
+      ? { recordingId: track.recordingId } : {}),
     artwork: httpsImage(track.artwork),
     artists: Array.isArray(track.artists) ? track.artists.filter(a => typeof a?.name === 'string')
       .map(a => ({ id: validId(a.id) ? a.id : '', name: a.name })) : [],
