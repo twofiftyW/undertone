@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { coverColors } from '../web/cover-palette.js';
 import { activeLyricIndex, createLyricsLoader, createLyricsSession, lyricsKey, lyricsQuery, parseLrc } from '../web/lyrics.js';
 
 const track = { source: 'local', id: 'local:first', title: ' North   Star ', artist: ' Звезда ', album: { title: 'Live' }, duration: 12.6 };
@@ -126,4 +127,49 @@ test('the open reader follows track changes and seeks without showing superseded
   assert.equal(requested.length, 3);
   assert.deepEqual(rendered, [timed]);
   assert.deepEqual(highlighted, [1, 0]);
+});
+
+test('saved verses display before their refresh and upgrade at the current playback position', async () => {
+  const rendered = [], highlighted = [], refreshes = [];
+  let visible = false;
+  const load = createLyricsLoader(async ({ refreshSync }) => {
+    if (!refreshSync) return { plainLyrics: 'One\nTwo', refreshSync: true };
+    return new Promise(resolve => refreshes.push(resolve));
+  });
+  const session = createLyricsSession(load, {
+    show() { visible = true; },
+    isOpen: () => visible,
+    render: content => rendered.push(content.kind),
+    highlight: index => highlighted.push(index),
+  });
+  const opening = session.open(track);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(rendered, ['plain']);
+  session.sync(12);
+  refreshes[0]({ syncedLyrics: '[00:01]One\n[00:10]Two' });
+  await opening;
+  assert.deepEqual(rendered, ['plain', 'timed']);
+  assert.deepEqual(highlighted, [1]);
+
+  const reopened = session.open(track);
+  await new Promise(resolve => setImmediate(resolve));
+  visible = false;
+  refreshes[1]({ syncedLyrics: '[00:03]Obsolete' });
+  await reopened;
+  assert.deepEqual(rendered, ['plain', 'timed', 'plain']);
+});
+
+test('dark borders leave the cover accent visible, while grayscale and transparent covers keep their tone', () => {
+  const darkCover = rgb => new Uint8ClampedArray([
+    ...Array.from({ length: 96 }, () => [2, 2, 2, 255]).flat(),
+    ...Array.from({ length: 4 }, () => [...rgb, 255]).flat(),
+  ]);
+  const red = coverColors(darkCover([240, 16, 12]));
+  const blue = coverColors(darkCover([8, 14, 210]));
+  assert.equal(red[0], 0);
+  assert.equal(blue[0], 240);
+  assert.ok(red[1] > 30 && blue[1] > 30);
+  assert.ok(red[2] >= 24 && blue[2] >= 24);
+  assert.equal(coverColors(darkCover([188, 188, 188]))[1], 0);
+  assert.equal(coverColors([255, 0, 0, 0]), null);
 });

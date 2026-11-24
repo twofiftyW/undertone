@@ -1,4 +1,5 @@
 import { tr } from './i18n.js';
+import { rememberCoverColors, sampleCover, savedCoverColors } from './cover-palette.js';
 
 const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -37,16 +38,52 @@ export function lyricsLayout() {
 export function showLyricsTrack(dialog, track) {
   dialog.querySelector('.lyrics-title').textContent = track.title;
   dialog.querySelector('.lyrics-artist').textContent = track.artist || '';
-  const artwork = track.artwork || '';
-  for (const image of dialog.querySelectorAll('.lyrics-cover img, .lyrics-backdrop img')) {
-    if (image.getAttribute('src') === artwork) continue;
-    image.hidden = true;
-    if (!artwork) {
-      image.removeAttribute('src');
-      continue;
+  const youtube = track.source === 'youtube' && /^[\w-]{11}$/.test(track.remoteId || '');
+  const artwork = track.artwork || track.album?.artwork || (youtube ? `https://i.ytimg.com/vi/${track.remoteId}/hqdefault.jpg` : '');
+  const previous = dialog.querySelector('.lyrics-cover img');
+  if (previous.getAttribute('src') === artwork) return;
+  const backdrop = dialog.querySelector('.lyrics-backdrop');
+  const blurred = backdrop.querySelector('img');
+  blurred.hidden = true;
+  blurred.removeAttribute('src');
+  resetColors(backdrop);
+  const cover = new Image();
+  cover.alt = '';
+  cover.hidden = true;
+  previous.replaceWith(cover);
+  if (!artwork) return;
+  const saved = savedCoverColors(artwork);
+  if (saved) setColors(backdrop, saved);
+  else cover.crossOrigin = 'anonymous';
+  cover.onload = () => {
+    if (!cover.isConnected) return;
+    cover.hidden = false;
+    if (saved) return;
+    let colors;
+    try { colors = sampleCover(cover); } catch { /* Some CDNs allow display but disallow reading pixels. */ }
+    if (colors) {
+      setColors(backdrop, colors);
+      rememberCoverColors(artwork, colors);
+    } else {
+      blurred.src = artwork;
+      blurred.hidden = false;
     }
-    image.onload = () => { image.hidden = false; };
-    image.onerror = () => { image.hidden = true; };
-    image.src = artwork;
-  }
+  };
+  cover.onerror = () => {
+    if (!cover.isConnected || !cover.hasAttribute('crossorigin')) return;
+    // A display-only image still supplies a blurred backdrop without canvas access.
+    cover.removeAttribute('crossorigin');
+    cover.src = artwork;
+  };
+  cover.src = artwork;
+}
+
+function resetColors(backdrop) {
+  for (const name of ['--lyrics-wash', '--lyrics-glow', '--lyrics-base']) backdrop.style.removeProperty(name);
+}
+
+function setColors(backdrop, [hue, saturation, lightness, secondary]) {
+  backdrop.style.setProperty('--lyrics-wash', `hsl(${hue}, ${saturation}%, ${lightness}%)`);
+  backdrop.style.setProperty('--lyrics-glow', `hsl(${secondary}, ${saturation}%, ${lightness - 7}%)`);
+  backdrop.style.setProperty('--lyrics-base', `hsl(${hue}, ${saturation}%, ${Math.round(lightness / 3)}%)`);
 }

@@ -25,24 +25,26 @@ dialog[data-kind="lyrics"] [hidden] { display: none; }
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  background: radial-gradient(ellipse at 13% 24%, var(--cover-start), transparent 75%), var(--cover-end);
+  background:
+    radial-gradient(ellipse at 8% 8%, var(--lyrics-wash, var(--art-light)), transparent 80%),
+    radial-gradient(ellipse at 92% 75%, var(--lyrics-glow, var(--art-mid)), transparent 76%),
+    var(--lyrics-base, var(--art-dark));
 }
 .lyrics-backdrop img {
   width: 100%; height: 100%;
-  object-fit: cover;
+  object-fit: fill;
   transform: scale(1.15);
-  filter: blur(52px);
+  filter: blur(52px) saturate(1.45) contrast(.88);
+  opacity: .58;
 }
 .lyrics-backdrop::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(120deg, rgba(12,12,14,.53), rgba(9,9,11,.75) 75%),
-              linear-gradient(0deg, rgba(0,0,0,.27), transparent 60%);
+  background: linear-gradient(135deg, transparent 16%, rgba(0,0,0,.16) 78%),
+              linear-gradient(0deg, rgba(0,0,0,.23), transparent 43%);
 }
-:root[data-theme="amoled"] .lyrics-backdrop { background: #000; }
-:root[data-theme="amoled"] .lyrics-backdrop img,
-:root[data-theme="amoled"] .lyrics-backdrop::after { display: none; }
+:root[data-theme="amoled"] .lyrics-backdrop { --art-light: #000; --art-mid: #000; }
 
 .lyrics-stage {
   position: relative;
@@ -274,7 +276,7 @@ dialog[data-kind="lyrics"] [hidden] { display: none; }
   .lyrics-metadata { margin: 0; }
   .lyrics-title { -webkit-line-clamp: 1; font-size: 17px; line-height: 1.25; }
   .lyrics-artist { margin-top: 2px; font-size: 13px; }
-  .lyrics-backdrop img { filter: blur(34px); }
+  .lyrics-backdrop img { filter: blur(34px) saturate(1.45) contrast(.88); }
   .lyrics-line { font-size: clamp(26px,7.4vw,39px); line-height: 1.23; }
   .lyrics-plain { font-size: clamp(21px,5.6vw,28px); }
   .lyrics-footer { min-height: 44px; }

@@ -148,6 +148,7 @@ export function createLyricsView({ dialog, openDialog, closeDialog, seekPlayback
     scroller.hidden = !hasLyrics;
     scroller.tabIndex = kind === 'timed' ? -1 : 0;
     find('.lyrics-footer').hidden = !hasLyrics;
+    find('.lyrics-credit').textContent = kind === 'plain' ? tr('LRCLIB · No timestamps') : 'LRCLIB';
 
     if (kind === 'timed') {
       const fragment = document.createDocumentFragment();

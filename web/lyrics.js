@@ -68,23 +68,23 @@ function lyricContent(record) {
 // The music backend keeps successful lookups on disk, including on iOS where
 // the local web origin can change. A cache-only read never initiates a lookup.
 export function createLyricsLoader(fetchLyrics) {
-  const lookups = new Map();
-  const reads = new Map();
-  return async function load(track, { cacheOnly = false } = {}) {
+  const pending = new Map();
+  return async function load(track, { cacheOnly = false, refreshSync = false } = {}) {
     const query = lyricsQuery(track);
     if (!query) return cacheOnly ? null : { kind: 'missing' };
     const key = lyricsKey(track);
-    const pending = cacheOnly ? reads : lookups;
-    if (!pending.has(key)) {
-      const request = Promise.resolve().then(() => fetchLyrics({ ...query, key, cacheOnly })).then(record => {
+    const operation = JSON.stringify([key, cacheOnly, refreshSync]);
+    if (!pending.has(operation)) {
+      const request = Promise.resolve().then(() => fetchLyrics({ ...query, key, cacheOnly, refreshSync })).then(record => {
         if (!record) return cacheOnly ? null : { kind: 'missing' };
         const content = lyricContent(record);
         if (record.storageFailed) content.storageFailed = true;
+        if (record.refreshSync && content.kind === 'plain') content.refreshSync = true;
         return content;
-      }).finally(() => pending.delete(key));
-      pending.set(key, request);
+      }).finally(() => pending.delete(operation));
+      pending.set(operation, request);
     }
-    return pending.get(key);
+    return pending.get(operation);
   };
 }
 
@@ -108,6 +108,13 @@ export function createLyricsSession(load, view) {
     catch { result = { kind: 'error' }; }
     if (ticket !== request || !view.isOpen()) return;
     view.render(result);
+    if (result.refreshSync && globalThis.navigator?.onLine !== false) {
+      // Let the reader use the saved verses while looking for timestamps.
+      try { result = await load(track, { refreshSync: true }); }
+      catch { return; }
+      if (ticket !== request || !view.isOpen() || result?.kind !== 'timed') return;
+      view.render(result);
+    }
     if (result.kind === 'timed') {
       lines = result.lines;
       sync(position);

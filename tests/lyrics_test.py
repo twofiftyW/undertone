@@ -1,5 +1,6 @@
 """LRCLIB response handling and offline lookup through the shipped music bridge."""
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -58,14 +59,15 @@ class LyricsTest(unittest.TestCase):
     def test_plain_and_instrumental_results_persist(self):
         instrumental = {'plainLyrics': None, 'syncedLyrics': None, 'instrumental': True}
         for key, record in [('plain', self.plain), ('instrumental', instrumental)]:
-            with patch('lyrics.requests.get', return_value=response(record=record)) as get:
+            replies = [response(record=record)] if record['instrumental'] else [response(record=record), response(record=[])]
+            with patch('lyrics.requests.get', side_effect=replies) as get:
                 self.assertEqual(self.lookup(key=key, album='', duration=0), record)
                 self.assertEqual(set(get.call_args.kwargs['params']), {'track_name', 'artist_name'})
                 self.assertEqual(self.lookup(key=key, cacheOnly=True), record)
 
     def test_missing_and_transient_errors_can_retry(self):
         with patch('lyrics.requests.get', side_effect=[
-            response(404), lyrics.requests.ConnectionError(), response(record=self.plain)
+            response(404), response(record=[]), lyrics.requests.ConnectionError(), response(record=self.plain), response(record=[])
         ]):
             self.assertIsNone(self.lookup())
             with self.assertRaises(ValueError):
@@ -107,11 +109,74 @@ class LyricsTest(unittest.TestCase):
             self.assertIsNone(self.lookup(cacheOnly=True))
 
     def test_concurrent_writes_leave_one_readable_record(self):
-        with patch('lyrics.fetch', side_effect=lambda *_: dict(self.plain)):
+        with patch('lyrics.fetch', side_effect=lambda *_: (dict(self.plain), True)):
             with ThreadPoolExecutor(max_workers=4) as workers:
                 self.assertEqual(list(workers.map(lambda _: self.lookup(), range(12))), [self.plain] * 12)
         self.assertEqual(self.lookup(cacheOnly=True), self.plain)
         self.assertEqual(len(list(self.directory.iterdir())), 1)
+
+    def test_prefers_timed_copy_of_the_same_recording(self):
+        timed = {**self.plain, 'syncedLyrics': '[00:03.00] First line'}
+        candidate = {**timed, 'trackName': 'Song', 'artistName': 'АРТИСТ', 'albumName': 'Album', 'duration': 201}
+        false_matches = [
+            {**candidate, 'artistName': 'Another singer'},
+            {**candidate, 'trackName': 'Another track', 'albumName': 'Song'},
+            {**candidate, 'trackName': 'Song (Remix)'},
+            {**candidate, 'duration': 213},
+            {**candidate, 'plainLyrics': 'Unrelated words from a different recording'},
+            {**candidate, 'syncedLyrics': '[00:01.00]\n[00:12.00]'},
+        ]
+        self.assertIsNone(lyrics.select_record(false_matches, {
+            'track_name': 'Song', 'artist_name': 'Артист', 'duration': 201, 'album_name': 'Album',
+        }, self.plain, {}))
+        with patch('lyrics.requests.get', side_effect=[response(record=self.plain), response(record=false_matches + [candidate])]) as get:
+            self.assertEqual(self.lookup(), timed)
+            self.assertEqual(get.call_args.args[0], lyrics.SEARCH_ENDPOINT)
+            self.assertEqual(get.call_args.kwargs['params'], {'track_name': 'Song', 'artist_name': 'Артист'})
+        with patch('lyrics.requests.get', side_effect=AssertionError('cached timed result contacted provider')):
+            self.assertEqual(self.lookup(), timed)
+
+    def test_feature_credit_can_move_between_title_and_artist(self):
+        timed = {**self.plain, 'syncedLyrics': '[00:03.00] First line'}
+        candidate = {**timed, 'trackName': 'Song (feat. Guest)', 'artistName': 'Артист', 'duration': 202, 'albumName': 'Album'}
+        with patch('lyrics.requests.get', side_effect=[response(404), response(record=[candidate])]):
+            self.assertEqual(self.lookup(artist='Артист, Guest'), timed)
+        with patch('lyrics.requests.get', side_effect=[response(404), response(record=[candidate])]):
+            self.assertIsNone(self.lookup(artist='Артист, Different guest', key='different'))
+
+    def test_plain_search_fallback_and_bracketed_synchronized_words(self):
+        candidate = {**self.plain, 'trackName': 'Song', 'artistName': 'Артист', 'duration': 201, 'albumName': 'Album'}
+        with patch('lyrics.requests.get', side_effect=[response(404), response(record=[candidate])]):
+            self.assertEqual(self.lookup(), self.plain)
+        self.assertFalse(lyrics.has_timing('[ar:Name]\n[00:01.20][00:03.50] \n[00:20.10]<00:21.10>'))
+        self.assertTrue(lyrics.has_timing('[00:01.20][00:03.50] [Intro]'))
+
+    def test_upgrades_old_plain_without_blocking_offline_and_rechecks_periodically(self):
+        self.directory.mkdir()
+        key = hashlib.sha256(self.args['key'].encode()).hexdigest()
+        legacy = self.directory / (key + '.json')
+        legacy.write_text(json.dumps(self.plain))
+        with patch('lyrics.requests.get', side_effect=AssertionError('cached words must display immediately')):
+            self.assertEqual(self.lookup(cacheOnly=True), self.plain)
+            self.assertEqual(self.lookup(), {**self.plain, 'refreshSync': True})
+        with patch('lyrics.requests.get', side_effect=lyrics.requests.ConnectionError()), patch('lyrics.time.time', return_value=100):
+            self.assertEqual(self.lookup(refreshSync=True), self.plain)
+        with patch('lyrics.time.time', return_value=101):
+            self.assertEqual(self.lookup(), self.plain)
+        timed = {**self.plain, 'syncedLyrics': '[00:03.00] First line'}
+        candidate = {**timed, 'trackName': 'Song', 'artistName': 'Артист', 'duration': 202, 'albumName': 'Album'}
+        with patch('lyrics.requests.get', side_effect=[response(record=[])]), patch('lyrics.time.time', return_value=100 + lyrics.RETRY_RECHECK):
+            self.assertEqual(self.lookup(refreshSync=True), self.plain)
+        with patch('lyrics.time.time', return_value=101 + lyrics.RETRY_RECHECK):
+            self.assertEqual(self.lookup(), self.plain)
+        with patch('lyrics.requests.get', return_value=response(record=[candidate])) as get, patch('lyrics.time.time', return_value=101 + lyrics.SYNC_RECHECK + lyrics.RETRY_RECHECK):
+            self.assertEqual(self.lookup(), {**self.plain, 'refreshSync': True})
+            self.assertEqual(self.lookup(refreshSync=True), timed)
+            get.assert_called_once()
+        # A late plain writer finishing after this upgrade cannot replace it.
+        legacy.write_text(json.dumps(self.plain))
+        with patch('lyrics.requests.get', side_effect=AssertionError('upgraded copy should work offline')):
+            self.assertEqual(self.lookup(cacheOnly=True), timed)
 
 
 if __name__ == '__main__':

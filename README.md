@@ -100,7 +100,7 @@ The player starts buffering the next stream with about twenty seconds left. **Ne
 
 Choose **Lyrics** in the player to open the full-screen lyrics view. The current line follows playback. Select a line to jump to that part of the song, or scroll to read ahead and choose **Back to current line** to follow along again. Songs with plain lyrics keep their original verses and line breaks.
 
-While this view is open, it follows the queue and looks up each recording on LRCLIB as needed. Lyrics are saved on the device for offline reading. Closing the view keeps the music playing.
+While this view is open, it follows the queue and looks up each recording on LRCLIB as needed. Lyrics are saved on the device for offline reading. Saved plain lyrics open immediately. When online, the player periodically checks for a timed version of the same recording. Closing the view keeps the music playing.
 
 ## Build Linux
 

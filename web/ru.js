@@ -1,5 +1,6 @@
 export const russian = {
   "Lyrics": "Текст",
+  "LRCLIB · No timestamps": "LRCLIB · Без таймкодов",
   "Load lyrics": "Загрузить текст",
   "Loading lyrics…": "Загружаем текст…",
   "This track is instrumental.": "Это инструментальная композиция.",
