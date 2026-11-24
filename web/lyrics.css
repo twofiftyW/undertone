@@ -41,7 +41,8 @@ dialog[data-kind="lyrics"] [hidden] { display: none; }
               linear-gradient(0deg, rgba(0,0,0,.27), transparent 60%);
 }
 :root[data-theme="amoled"] .lyrics-backdrop { background: #000; }
-:root[data-theme="amoled"] .lyrics-backdrop img { display: none; }
+:root[data-theme="amoled"] .lyrics-backdrop img,
+:root[data-theme="amoled"] .lyrics-backdrop::after { display: none; }
 
 .lyrics-stage {
   position: relative;

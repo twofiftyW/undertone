@@ -24,6 +24,7 @@ pub struct Player {
     key: String,
     serial: u64,
     next: Option<(u64, String)>,
+    paused_seek: Option<f64>,
 }
 
 impl Player {
@@ -82,6 +83,7 @@ impl Player {
             if reply["event"] == "start-file" && self.next.as_ref().is_some_and(|(id, _)| reply["playlist_entry_id"].as_u64() == Some(*id)) {
                 self.key = self.next.take().unwrap().1;
                 self.serial += 1;
+                self.paused_seek = None;
             }
             if reply["event"] == "end-file" && reply["reason"] == "error" {
                 self.error = Some(format!("Couldn’t play this recording: {}", reply["file_error"].as_str().or_else(|| reply["error"].as_str()).unwrap_or("audio could not be loaded")));
@@ -107,11 +109,22 @@ impl Player {
         if self.next.as_ref().is_some_and(|(id, _)| Some(*id) == playing_id) {
             self.key = self.next.take().unwrap().1;
             self.serial += 1;
+            self.paused_seek = None;
         }
         let position = self.property("time-pos");
         let duration = self.property("duration");
         let paused = self.property("pause").as_bool().unwrap_or(true);
         let ended = self.property("eof-reached").as_bool().unwrap_or(false);
+        // During a paused seek, mpv's audible clock can stay one output buffer
+        // behind the requested lyric. Keep the cursor there until audio catches up.
+        let mut cursor = position.as_f64().unwrap_or(0.0);
+        if let Some(target) = self.paused_seek {
+            if !ended && (paused || (target - 1.0..target).contains(&cursor)) {
+                cursor = target.min(duration.as_f64().unwrap_or(target));
+            } else {
+                self.paused_seek = None;
+            }
+        }
         let buffering = self.property("paused-for-cache").as_bool().unwrap_or(false);
         let output_volume = self.property("ao-volume");
         let output_muted = self.property("ao-mute");
@@ -120,12 +133,13 @@ impl Player {
                 self.error = Some("The Linux audio player exited. Press Play to retry.".into());
             }
         }
-        json!({"token": self.token, "key": self.key, "serial": self.serial, "position": position.as_f64().unwrap_or(0.0), "duration": duration.as_f64().unwrap_or(0.0), "paused": paused, "ready": position.is_number(), "buffering": buffering, "ended": ended, "error": self.error, "outputVolume": output_volume, "outputMuted": output_muted})
+        json!({"token": self.token, "key": self.key, "serial": self.serial, "position": cursor, "duration": duration.as_f64().unwrap_or(0.0), "paused": paused, "ready": position.is_number(), "buffering": buffering, "ended": ended, "error": self.error, "outputVolume": output_volume, "outputMuted": output_muted})
     }
 
     pub fn handle(&mut self, operation: &str, args: &Value) -> Result<Value, String> {
         if operation == "load" {
             self.start()?;
+            self.paused_seek = None;
             self.token = args["token"].as_u64().unwrap_or(0);
             self.key = args["key"].as_str().unwrap_or("").to_owned();
             self.serial = 0;
@@ -139,6 +153,7 @@ impl Player {
         } else if operation == "state" {
             return Ok(self.state());
         } else if operation == "stop" {
+            self.paused_seek = None;
             self.token = args["token"].as_u64().unwrap_or(self.token);
             self.error = None;
             self.next = None;
@@ -167,7 +182,9 @@ impl Player {
                 "pause" => { self.send(json!(["set_property", "pause", args["paused"].as_bool().unwrap_or(true)]))?; }
                 "seek" => {
                     let seconds = args["seconds"].as_f64().filter(|n| n.is_finite() && *n >= 0.0).ok_or("Invalid seek position")?;
+                    let paused = self.property("pause") == true;
                     self.send(json!(["seek", seconds, "absolute+exact"]))?;
+                    self.paused_seek = paused.then_some(seconds);
                 }
                 "volume" => {
                     let volume = args["volume"].as_f64().filter(|n| n.is_finite()).ok_or("Invalid volume")?.clamp(0.0, 1.0);
@@ -282,9 +299,12 @@ mod tests {
         let paused = player.state()["position"].as_f64().unwrap();
         std::thread::sleep(Duration::from_millis(180));
         assert!((player.state()["position"].as_f64().unwrap() - paused).abs() < 0.05);
-        player.handle("seek", &json!({"seconds": 5.0})).unwrap();
-        // mpv's audible clock includes a small audio-output buffer delay.
-        wait_position(&mut player, 4.7);
+        for target in [5.0, 1.75, 5.0] {
+            player.handle("seek", &json!({"seconds": target})).unwrap();
+            std::thread::sleep(Duration::from_millis(80));
+            assert_eq!(player.state()["position"], target);
+            assert!((player.property("time-pos").as_f64().unwrap() - target).abs() < 0.4);
+        }
         player.handle("volume", &json!({"volume": 0.3, "muted": true})).unwrap();
         assert_eq!(player.property("mute"), true);
         assert_eq!(player.property("volume"), 30.0);
