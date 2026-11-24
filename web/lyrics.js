@@ -87,3 +87,44 @@ export function createLyricsLoader(fetchLyrics) {
     return pending.get(key);
   };
 }
+
+// The open reader follows playback. Switching songs or reopening the reader
+// supersedes outstanding responses without interrupting the audio player.
+export function createLyricsSession(load, view) {
+  let trackKey = '', request = 0, lines = null, position = 0;
+
+  function sync(seconds) {
+    position = Number.isFinite(seconds) ? seconds : 0;
+    if (lines && view.isOpen()) view.highlight(activeLyricIndex(lines, position));
+  }
+
+  async function open(track) {
+    const ticket = ++request;
+    trackKey = lyricsKey(track);
+    lines = null;
+    view.show(track);
+    let result;
+    try { result = await load(track); }
+    catch { result = { kind: 'error' }; }
+    if (ticket !== request || !view.isOpen()) return;
+    view.render(result);
+    if (result.kind === 'timed') {
+      lines = result.lines;
+      sync(position);
+    }
+  }
+
+  function trackChanged(track) {
+    const key = lyricsKey(track);
+    if (key === trackKey) return;
+    trackKey = key;
+    lines = null;
+    position = 0;
+    ++request;
+    if (!view.isOpen()) return;
+    if (track) return open(track);
+    view.close();
+  }
+
+  return { open, trackChanged, sync, get position() { return position; } };
+}

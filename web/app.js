@@ -4,7 +4,7 @@ import { nativeRuntime as native, musicRequest, parseSpotifyFile, spotifyJobRequ
 import { spotifyJobClient } from "./spotify-job.js";
 import { iconNames, appIconPath, restoreAppIcon, selectAppIcon, iconSyncEnabled, setIconSync, syncIconWithTheme } from './app-icon.js';
 import { BrowserPlayer, LinuxPlayer, inPreloadWindow, isStreamingAudio } from "./player.js";
-import { activeLyricIndex, createLyricsLoader } from './lyrics.js';
+import { createLyricsLoader, createLyricsSession } from './lyrics.js';
 import { createLyricsView } from './lyrics-view.js';
 import { canDownload, resolveCatalogAudio, appendSpotifyPreview, prepareSpotifyCollections, appendSpotifyToPlaylist, replaceLibraryTracks, mergePCLibrary, savedTrackMetadata, isDuplicateImport } from "./library.js";
 import { coverCollage } from './covers.js';
@@ -28,12 +28,8 @@ const deviceStorage = desktop || mobileApp;
 const audio = linuxPlayback ? new LinuxPlayer(native) : nativeAudio ? $("#audio") : new BrowserPlayer($("#audio"));
 const view = $("#view");
 const dialog = $("#dialog");
-const lyricsView = createLyricsView({ dialog, openDialog, closeDialog, dialogTop });
-const loadLyrics = createLyricsLoader(query => musicRequest('lyrics', query));
-let lyricsRequest = 0;
-let lyricsTrackId = null;
-let lyricLines = null;
-let playbackPosition = 0;
+const lyricsView = createLyricsView({ dialog, openDialog, closeDialog, seekPlayback });
+const lyricsSession = createLyricsSession(createLyricsLoader(query => musicRequest('lyrics', query)), lyricsView);
 let library = emptyLibrary();
 let db;
 let storageReady = false;
@@ -721,6 +717,7 @@ if (platform === 'android') {
 }
 
 function updatePlayIcons() {
+  lyricsView.playback(playing, loading);
   $('#seek').disabled = !current || loading;
   $("#play-pause").innerHTML = icon(playing ? "pause" : "play");
   $("#play-pause").setAttribute("aria-label", playing ? tr("Pause") : tr("Play"));
@@ -736,10 +733,7 @@ function updatePlayer() {
   $("#now-art").innerHTML = current ? art(current, false) : icon("disc");
   $("#now-like").disabled = !current;
   $("#lyrics-toggle").disabled = !current;
-  if (lyricsView.isOpen() && current?.id !== lyricsTrackId) {
-    if (current) showTrackLyrics(true);
-    else lyricsView.close();
-  }
+  lyricsSession.trackChanged(current);
   $("#now-like").classList.toggle("liked", !!current && isLiked(current.id));
   $("#now-like").setAttribute("aria-label", current && isLiked(current.id) ? tr("Unlike current song") : tr("Like current song"));
   ["#play-pause", "#previous", "#next"].forEach((selector) => $(selector).disabled = !current);
@@ -749,31 +743,18 @@ function updatePlayer() {
   renderQueue();
 }
 
-async function showTrackLyrics(cacheOnly = false) {
+function showTrackLyrics() {
   if (!current) return;
-  const track = current;
-  const request = ++lyricsRequest;
-  lyricsTrackId = track.id;
-  lyricLines = null;
-  lyricsView.show(track);
-  let result;
-  try {
-    result = await loadLyrics(track, { cacheOnly });
-  } catch {
-    result = { kind: 'error' };
-  }
-  if (request !== lyricsRequest || !lyricsView.isOpen() || current?.id !== track.id) return;
-  lyricsView.render(result ?? { kind: 'idle' });
-  if (result?.kind === 'timed') {
-    lyricLines = result.lines;
-    lyricsView.highlight(activeLyricIndex(lyricLines, playbackPosition));
-  }
+  const opened = lyricsSession.open(current);
+  lyricsView.playback(playing, loading);
+  lyricsView.progress(lyricsSession.position, current.duration || 0);
+  return opened;
 }
 
 function updateProgress(position = audio.currentTime, duration = audio.duration) {
-  playbackPosition = Number.isFinite(position) ? position : 0;
-  if (lyricLines && lyricsView.isOpen()) lyricsView.highlight(activeLyricIndex(lyricLines, playbackPosition));
+  lyricsSession.sync(position);
   const length = Number.isFinite(duration) && duration > 0 ? duration : current?.duration || 0;
+  lyricsView.progress(lyricsSession.position, length);
   if (!seeking) {
     $("#seek").value = length ? Math.min(1000, position / length * 1000) : 0;
     setRange($("#seek"));
@@ -786,6 +767,17 @@ function updateProgress(position = audio.currentTime, duration = audio.duration)
 }
 
 function setRange(input) { input.style.setProperty("--fill", `${Number(input.value) / Number(input.max) * 100}%`); }
+
+function seekPlayback(seconds) {
+  if (!current || loading || !Number.isFinite(seconds)) return false;
+  const length = nativeAudio ? current.duration : audio.duration || current.duration;
+  if (!Number.isFinite(length) || length <= 0) return false;
+  const time = Math.min(length, Math.max(0, seconds));
+  if (nativeAudio) nativeAudio.command("seek", String(time));
+  else audio.currentTime = time;
+  updateProgress(time, length);
+  return true;
+}
 
 function mediaMetadata() {
   if (current && "mediaSession" in navigator && "MediaMetadata" in window) {
@@ -2133,9 +2125,7 @@ $("#seek").addEventListener("change", () => {
   seeking = false;
   const length = nativeAudio ? current?.duration || 0 : audio.duration;
   if (!Number.isFinite(length) || !length) return;
-  const time = Number($("#seek").value) / 1000 * length;
-  if (nativeAudio) nativeAudio.command("seek", String(time));
-  else audio.currentTime = time;
+  seekPlayback(Number($("#seek").value) / 1000 * length);
 });
 
 audio.addEventListener("play", () => { playing = true; updatePlayIcons(); });

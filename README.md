@@ -98,7 +98,9 @@ Use **+** or **Add to queue** to put a song first under **Up next**. On Android,
 
 The player starts buffering the next stream with about twenty seconds left. **Next** reuses an ongoing load. It also prepares the next available local file during offline playback. Manually queued songs play in the order they were added. Queue edits, shuffle, and repeat can change which song is next. A slow stream can still delay the transition.
 
-Open **Lyrics** in the player to look up the current recording on LRCLIB. Timed lyrics highlight the current line as you play or seek. Recordings with plain lyrics show the full text. Lyrics you open are saved on that device for offline playback. If the track changes while lyrics are open, saved lyrics appear automatically. Choose **Load lyrics** to look up a track for the first time.
+Choose **Lyrics** in the player to open the full-screen lyrics view. The current line follows playback. Select a line to jump to that part of the song, or scroll to read ahead and choose **Back to current line** to follow along again. Songs with plain lyrics keep their original verses and line breaks.
+
+While this view is open, it follows the queue and looks up each recording on LRCLIB as needed. Lyrics are saved on the device for offline reading. Closing the view keeps the music playing.
 
 ## Build Linux
 

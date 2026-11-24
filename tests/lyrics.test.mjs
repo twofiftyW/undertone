@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeLyricIndex, createLyricsLoader, lyricsKey, lyricsQuery, parseLrc } from '../web/lyrics.js';
+import { activeLyricIndex, createLyricsLoader, createLyricsSession, lyricsKey, lyricsQuery, parseLrc } from '../web/lyrics.js';
 
 const track = { source: 'local', id: 'local:first', title: ' North   Star ', artist: ' Звезда ', album: { title: 'Live' }, duration: 12.6 };
 
@@ -83,4 +83,47 @@ test('an offline error can be retried and a failed cache write still shows the w
   });
   await assert.rejects(load(track), /offline/);
   assert.deepEqual(await load(track), { kind: 'plain', text: 'Available', storageFailed: true });
+});
+
+test('the open reader follows track changes and seeks without showing superseded lyrics', async () => {
+  let visible = false;
+  const requested = [], rendered = [], highlighted = [], replies = [];
+  const session = createLyricsSession(item => {
+    requested.push(item.id);
+    return new Promise(resolve => replies.push(resolve));
+  }, {
+    isOpen: () => visible,
+    show: () => { visible = true; },
+    close: () => { visible = false; },
+    render: result => rendered.push(result),
+    highlight: index => highlighted.push(index),
+  });
+
+  const second = { ...track, id: 'local:second' };
+  session.trackChanged(track);
+  assert.deepEqual(requested, []);
+  const firstRead = session.open(track);
+  const nextRead = session.trackChanged(second);
+  session.trackChanged({ ...second, queueKey: 'another-occurrence' });
+  assert.deepEqual(requested, [track.id, second.id]);
+  const timed = { kind: 'timed', lines: [{ time: 0, text: 'First line' }, { time: 9, text: 'Second line' }] };
+  session.sync(10);
+  replies[1](timed);
+  await nextRead;
+  replies[0]({ kind: 'plain', text: 'Words from the earlier track' });
+  await firstRead;
+  assert.deepEqual(rendered, [timed]);
+  session.sync(1);
+  assert.deepEqual(highlighted, [1, 0]);
+
+  const closedRead = session.trackChanged(track);
+  session.trackChanged(null);
+  replies[2](timed);
+  await closedRead;
+  assert.equal(visible, false);
+  session.trackChanged(second);
+  session.sync(30);
+  assert.equal(requested.length, 3);
+  assert.deepEqual(rendered, [timed]);
+  assert.deepEqual(highlighted, [1, 0]);
 });
